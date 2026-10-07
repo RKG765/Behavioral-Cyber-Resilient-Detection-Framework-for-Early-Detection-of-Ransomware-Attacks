@@ -1,0 +1,61 @@
+================================================================================
+ENTERPRISE TWO-TIER EDR: WHITELIST DATABASE INSPECTION REPORT (whitelist.db)
+================================================================================
+Database Path : d:\project4\whitelist.db
+Format        : SQLite 3 Database
+Purpose       : Layer 1B (L1B) Custom Enterprise Hash Whitelist
+Engine / Role : Fast-path bypass (<0.2ms) for custom, in-house unsigned binaries
+
+--------------------------------------------------------------------------------
+1. DATABASE SCHEMA & TABLE STRUCTURE
+--------------------------------------------------------------------------------
+Table Name: trusted_hashes
+
+Schema Definition:
+    CREATE TABLE trusted_hashes (
+        sha256    TEXT PRIMARY KEY,
+        app_name  TEXT,
+        added_at  TEXT DEFAULT (datetime('now'))
+    );
+
+Column Breakdown:
+  - sha256   : TEXT (Primary Key) - 64-character lowercase hexadecimal SHA-256 hash
+  - app_name : TEXT - Human-readable application name (e.g., 'Internal_Build_Tool.exe')
+  - added_at : TEXT - ISO-8601 timestamp when the application hash was registered
+
+--------------------------------------------------------------------------------
+2. CURRENT DATA / STORED RECORDS
+--------------------------------------------------------------------------------
+Total Records Count: 0 records currently stored
+
+Status:
+  The database is initialized and active with an empty table.
+  (In production deployment, standard commercial software from Microsoft, Google,
+   Adobe, etc. is verified dynamically via Level 1A WinTrust Authenticode signatures
+   with 0.0ms ML overhead. This SQLite database serves as Level 1B, reserved for
+   internal corporate/admin tools that lack commercial certificates.)
+
+--------------------------------------------------------------------------------
+3. HOW DATA IS ADDED & QUERIED BY THE EDR SYSTEM
+--------------------------------------------------------------------------------
+A. Query Mechanism (agent.py - is_whitelisted):
+   When a new process launches:
+   1. The endpoint agent checks if it has a valid digital certificate (WinTrust L1A).
+   2. If unsigned, the agent calculates the file's SHA-256 in 8KB streaming chunks.
+   3. It runs a fast B-tree query:
+      SELECT 1 FROM trusted_hashes WHERE sha256 = ?;
+   4. If matched, the binary is ALLOWED in < 0.2ms, bypassing ONNX AI inference.
+   5. If not matched, it proceeds to the 99-feature Tier 1 Behavioral AI model.
+
+B. Administrative Registration (Admin Action):
+   Administrators can insert trusted in-house enterprise binaries via agent.py:
+   INSERT OR IGNORE INTO trusted_hashes (sha256, app_name) VALUES (?, ?);
+
+--------------------------------------------------------------------------------
+4. EXAMPLE RECORD FORMAT (WHEN POPULATED)
+--------------------------------------------------------------------------------
+#    | sha256 (64 hex characters)                                           | app_name                    | added_at
+-----------------------------------------------------------------------------------------------------------------------------
+1    | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae    | Internal_Backup_Agent.exe   | 2026-10-07 10:15:00
+2    | a35b4a9f97063d3e264627b9c9f6d13a9482f3ef423bcbbfa45e34523a67d123    | Corporate_ERP_Sync.exe      | 2026-10-07 11:30:22
+================================================================================

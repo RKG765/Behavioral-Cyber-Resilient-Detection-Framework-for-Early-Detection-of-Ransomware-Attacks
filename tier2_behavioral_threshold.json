@@ -1,0 +1,8 @@
+{
+  "threshold": 0.6546140658855438,
+  "target_fpr": 0.01,
+  "val_fpr_mean": 0.005973195608614614,
+  "val_tpr_mean": 0.9334895988941554,
+  "val_auc_mean": 0.9957331318724988,
+  "note": "Mean threshold over 25 GroupKFold folds (5 seeds x 5 folds). Use for production."
+}

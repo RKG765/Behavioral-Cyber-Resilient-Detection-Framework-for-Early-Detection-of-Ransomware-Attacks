@@ -1,0 +1,89 @@
+==============================================================================
+ A. DATASET-WIDE DUPLICATE / CONFLICT ANALYSIS
+==============================================================================
+  Samples                         : 2298
+  Unique sequences                : 604  (26.3%)
+  Samples sharing a sequence      : 1821  (79.2%)
+  Sequences with BOTH labels      : 44
+  Samples inside conflict groups  : 1061  (46.2%)
+  >>> Accuracy CEILING for ANY model that sees only the ID sequence: 90.03%
+      (= predict the majority label of each identical sequence; no model,
+       however complex, can beat this on data it has this label noise on)
+  Top 10 most ambiguous sequences (conflicting labels):
+    benign=105 malware= 27 len= 4 | 1 1 5 5
+    benign= 18 malware=102 len=12 | 1 1 1 1 1 1 1 1 1 1 1 1
+    benign= 75 malware= 27 len=16 | 1 1 1 1 1 1 1 1 5 5 5 5 5 5 ...
+    benign= 69 malware= 27 len= 8 | 1 1 1 1 5 5 5 5
+    benign= 73 malware= 21 len=24 | 1 1 1 1 1 1 1 1 1 1 1 1 5 5 ...
+    benign= 14 malware= 66 len= 6 | 1 1 1 1 1 1
+    benign= 11 malware= 58 len= 8 | 1 1 1 1 1 1 1 1
+    benign= 14 malware= 52 len= 4 | 1 1 1 1
+    benign= 53 malware=  9 len=12 | 1 1 1 1 1 1 5 5 5 5 5 5
+    benign=  8 malware= 43 len=50 | 3 3 3 3 3 3 3 3 3 3 3 3 3 3 ...
+
+==============================================================================
+ B. VALIDATION ERRORS @ threshold 0.5  (Tier-2 model, 460 val samples)
+==============================================================================
+  False Positives: 32   False Negatives: 37
+
+  --- FALSE POSITIVES (benign flagged malware; most confident first) (top 20 of 32) ---
+   #      p len uniq opp-label twins in train | sequence
+   1  0.696  50    2                        - | 1 1 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 ...
+   2  0.694  50    1                       35 | 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 ...
+   3  0.692  12    1                       83 | 1 1 1 1 1 1 1 1 1 1 1 1
+   4  0.692  12    1                       83 | 1 1 1 1 1 1 1 1 1 1 1 1
+   5  0.682  48    3                        - | 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 ...
+   6  0.673   8    1                       52 | 1 1 1 1 1 1 1 1
+   7  0.673   8    1                       52 | 1 1 1 1 1 1 1 1
+   8  0.673   8    1                       52 | 1 1 1 1 1 1 1 1
+   9  0.673   8    1                       52 | 1 1 1 1 1 1 1 1
+  10  0.664  24    2                        1 | 1 1 1 1 1 1 1 1 1 1 1 1 3 3 3 3 3 3 3 3 3 3 ...
+  11  0.656   6    1                       47 | 1 1 1 1 1 1
+  12  0.656   6    1                       47 | 1 1 1 1 1 1
+  13  0.656   6    1                       47 | 1 1 1 1 1 1
+  14  0.650  16    1                        - | 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3
+  15  0.626   4    1                       44 | 1 1 1 1
+  16  0.626   4    1                       44 | 1 1 1 1
+  17  0.626   4    1                       44 | 1 1 1 1
+  18  0.621  16    2                        - | 3 3 3 3 3 3 3 3 1 1 1 1 1 1 1 1
+  19  0.612   8    2                        - | 1 1 13 13 13 13 1 1
+  20  0.607  12    2                        - | 1 1 1 1 13 13 1 13 13 13 13 1
+
+  --- FALSE NEGATIVES (malware missed; most confident-benign first) (top 20 of 37) ---
+   #      p len uniq opp-label twins in train | sequence
+   1  0.243  27    2                        - | 3 3 3 3 3 3 3 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 ...
+   2  0.261   3    2                        - | 22 22 11
+   3  0.335   3    2                        7 | 1 22 22
+   4  0.346  50    3                        - | 22 22 22 1 22 22 1 5 5 5 22 22 22 22 22 22 22 22 22 22 22 22 ...
+   5  0.363   3    3                        1 | 1 13 22
+   6  0.372   4    2                       84 | 1 1 5 5
+   7  0.384   4    2                       10 | 5 1 5 1
+   8  0.387  16    4                        - | 13 22 12 22 22 22 22 13 22 22 22 1 13 22 22 1
+   9  0.393  24    2                       64 | 1 1 1 1 1 1 1 1 1 1 1 1 5 5 5 5 5 5 5 5 5 5 ...
+  10  0.393  24    2                       64 | 1 1 1 1 1 1 1 1 1 1 1 1 5 5 5 5 5 5 5 5 5 5 ...
+  11  0.393  24    2                       64 | 1 1 1 1 1 1 1 1 1 1 1 1 5 5 5 5 5 5 5 5 5 5 ...
+  12  0.393  24    2                       64 | 1 1 1 1 1 1 1 1 1 1 1 1 5 5 5 5 5 5 5 5 5 5 ...
+  13  0.396  20    2                       11 | 1 1 1 1 1 1 1 1 1 1 5 5 5 5 5 5 5 5 5 5
+  14  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+  15  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+  16  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+  17  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+  18  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+  19  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+  20  0.398   8    2                       57 | 1 1 1 1 5 5 5 5
+
+==============================================================================
+ C. ARE THE ERRORS DISTINGUISHABLE? (all errors, not just top 20)
+==============================================================================
+  False Positives: n=32 | seq also in train: 21 (66%) | with an OPPOSITE-label identical twin in train: 20 (62%) | median len=8 | median #unique IDs=1
+  False Negatives: n=37 | seq also in train: 28 (76%) | with an OPPOSITE-label identical twin in train: 27 (73%) | median len=8 | median #unique IDs=2
+  Correct (for contrast): n=391 | seq also in train: 298 (76%) | with an OPPOSITE-label identical twin in train: 143 (37%) | median len=14 | median #unique IDs=2
+
+  Val samples whose exact sequence has BOTH labels in train: 181 / 460
+  Lookup-table baseline (identical seq seen in train, unambiguous): covers 342/460, correct 296/342 (86.5%)
+
+  VERDICT GUIDE:
+   * Large 'opposite-label twin' share / low ceiling  -> data ceiling is hit; a bigger
+     model cannot help, need richer features (args, paths, timing, counts).
+   * Errors with unique sequences and no twins        -> model/training problem;
+     proceed to Step 2 (hard-example weighting).

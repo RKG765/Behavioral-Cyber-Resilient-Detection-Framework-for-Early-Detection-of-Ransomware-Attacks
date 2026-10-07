@@ -1,0 +1,168 @@
+rows used: 1,763,338  | distinct processes: 15,411
+processes: 15,411  malware: 2,929  benign: 12,482
+
+================================================================================================
+ A. IMAGE (executable name) -- 25 most frequent
+================================================================================================
+  value                                            procs   benign  malware    %mal
+  svchost.exe                                       2403      142     2261   94.1%
+  msedge.exe                                        1322     1322        0    0.0%
+  taskhostw.exe                                     1146     1145        1    0.1%
+  microsoftedgeupdate.exe                            719      719        0    0.0%
+  wevtutil.exe                                       692      692        0    0.0%
+  mscorsvw.exe                                       603      603        0    0.0%
+  filecoauth.exe                                     312      312        0    0.0%
+  mpcmdrun.exe                                       294      294        0    0.0%
+  dsregcmd.exe                                       244      244        0    0.0%
+  tiworker.exe                                       242      242        0    0.0%
+  mousocoreworker.exe                                236      236        0    0.0%
+  rundll32.exe                                       235      231        4    1.7%
+  trustedinstaller.exe                               232      232        0    0.0%
+  conhost.exe                                        222      219        3    1.4%
+  cmd.exe                                            216      205       11    5.1%
+  gpupdate.exe                                       206      206        0    0.0%
+  wmiprvse.exe                                       167      167        0    0.0%
+  smartscreen.exe                                    150      150        0    0.0%
+  slui.exe                                           146      146        0    0.0%
+  sc.exe                                             145      145        0    0.0%
+  logonui.exe                                        143      142        1    0.7%
+  splunk-powershell.exe                              120        0      120  100.0%
+  dllhost.exe                                        118      111        7    5.9%
+  usoclient.exe                                      114      114        0    0.0%
+  smss.exe                                           102      101        1    1.0%
+
+================================================================================================
+ B. PARENT IMAGE -- 25 most frequent
+================================================================================================
+  value                                            procs   benign  malware    %mal
+  <none>                                            9239     7858     1381   14.9%
+  svchost.exe                                       1428     1417       11    0.8%
+  services.exe                                      1370      365     1005   73.4%
+  msedge.exe                                         819      819        0    0.0%
+  msmpeng.exe                                        552      552        0    0.0%
+  splunkd.exe                                        420        0      420  100.0%
+  cmd.exe                                            233      180       53   22.7%
+  explorer.exe                                       221      198       23   10.4%
+  smss.exe                                           210      207        3    1.4%
+  wevtutil.exe                                        84       84        0    0.0%
+  microsoftedgeupdate.exe                             78       78        0    0.0%
+  mpcmdrun.exe                                        73       73        0    0.0%
+  winlogon.exe                                        63       60        3    4.8%
+  taskhostw.exe                                       50       50        0    0.0%
+  sppextcomobj.exe                                    49       49        0    0.0%
+  mousocoreworker.exe                                 46       46        0    0.0%
+  powershell.exe                                      38       26       12   31.6%
+  lazagne.exe                                         27       27        0    0.0%
+  ngentask.exe                                        27       27        0    0.0%
+  wininit.exe                                         22       15        7   31.8%
+  acrobatreaderpro.exe                                20       20        0    0.0%
+  musnotification.exe                                 20       20        0    0.0%
+  compattelrunner.exe                                 16       16        0    0.0%
+  userinit.exe                                        15       15        0    0.0%
+  windows_11_free_upgrade (1).exe                     15       15        0    0.0%
+
+================================================================================================
+ C. IMAGE FOLDER (first 4 path parts) -- 25 most frequent
+================================================================================================
+  value                                            procs   benign  malware    %mal
+  c:\windows\system32                               8928     6485     2443   27.4%
+  c:\program files (x86)\microsoft\edge             1426     1426        0    0.0%
+  c:\users\altinistef.stefania\appdata               595      595        0    0.0%
+  c:\program files (x86)\microsoft\edgeupdate        568      568        0    0.0%
+  c:\windows\microsoft.net\framework64               450      450        0    0.0%
+  c:\program files\splunkuniversalforwarder\bin      435        0      435  100.0%
+  c:\programdata\microsoft\windows defender          414      414        0    0.0%
+  c:\users\chrsm\appdata                             399      399        0    0.0%
+  c:\windows\system32\wbem                           258      258        0    0.0%
+  c:\windows\microsoft.net\framework                 255      255        0    0.0%
+  c:\windows\syswow64                                238      238        0    0.0%
+  c:\windows\servicing                               232      232        0    0.0%
+  c:\windows\winsxs\amd64_microsoft-windows-ser      135      135        0    0.0%
+  c:\windows                                         127      121        6    4.7%
+  c:\users\altinitat.stefania\appdata                101      101        0    0.0%
+  c:\windows\winsxs\amd64_microsoft-windows-ser       91       91        0    0.0%
+  c:\users\altinistef.stefania\downloads              75       75        0    0.0%
+  <none>                                              64       58        6    9.4%
+  c:\windows\system32\windowspowershell               57       48        9   15.8%
+  c:\windows\systemapps\microsoft.windows.searc       54       54        0    0.0%
+  c:\windows\softwaredistribution\download            50       50        0    0.0%
+  c:\program files\microsoft update health tool       41       41        0    0.0%
+  c:\program files\windowsapps\microsoft.yourph       38       38        0    0.0%
+  c:\program files\oracle\virtualbox guest addi       38       38        0    0.0%
+  c:\users\altini~1.ste\appdata                       31       31        0    0.0%
+
+================================================================================================
+ D. LABEL-LEAK STRENGTH (how pure are the identifiers?)
+================================================================================================
+
+  [Image] values with >= 5 processes: 179
+     100%-malware values : 9  -> cover 442 / 2929 malware processes (15.1%)
+     100%-benign values  : 141  -> cover 10665 / 12482 benign processes (85.4%)
+
+  [ParentImage] values with >= 5 processes: 44
+     100%-malware values : 1  -> cover 420 / 2929 malware processes (14.3%)
+     100%-benign values  : 35  -> cover 3471 / 12482 benign processes (27.8%)
+
+  [ImageFolder] values with >= 5 processes: 43
+     100%-malware values : 2  -> cover 442 / 2929 malware processes (15.1%)
+     100%-benign values  : 34  -> cover 5675 / 12482 benign processes (45.5%)
+  Predicting label from Image name    ONLY: 98.2% accuracy (majority baseline 81.0%)
+  Predicting label from Parent name   ONLY: 87.9% accuracy (majority baseline 81.0%)
+  Predicting label from Image folder  ONLY: 84.0% accuracy (majority baseline 81.0%)
+
+================================================================================================
+ E. SUSPECTED LAB / MONITORING-AGENT ARTIFACTS (name or folder keyword match)
+================================================================================================
+  keyword              procs   benign  malware    %mal   (matched in image path or parent)
+  splunk                 442        0      442  100.0%
+  sysmon                  69       69        0    0.0%
+  psexe                   27       21        6   22.2%
+  atomic                   1        0        1  100.0%
+  virtualbox              38       38        0    0.0%
+  trustedinstaller       232      232        0    0.0%
+  msmpeng                615      615        0    0.0%
+  mpcmdrun               322      322        0    0.0%
+  wmiprvse               167      167        0    0.0%
+  wsmprovhost              4        0        4  100.0%
+
+================================================================================================
+ F. TOP-25 PURE-MALWARE and PURE-BENIGN executables by volume (n >= 5)
+================================================================================================
+  -- pure MALWARE --
+     splunk-powershell.exe                             120 procs
+     splunk-netmon.exe                                  61 procs
+     splunk-monitornohandle.exe                         61 procs
+     splunk-winprintmon.exe                             60 procs
+     splunk-regmon.exe                                  60 procs
+     splunk-admon.exe                                   59 procs
+     splunk-winevtlog.exe                                7 procs
+     splunkd.exe                                         7 procs
+     streamfwd.exe                                       7 procs
+  -- pure BENIGN --
+     msedge.exe                                       1322 procs
+     taskhostw.exe                                    1146 procs
+     microsoftedgeupdate.exe                           719 procs
+     wevtutil.exe                                      692 procs
+     mscorsvw.exe                                      603 procs
+     filecoauth.exe                                    312 procs
+     mpcmdrun.exe                                      294 procs
+     dsregcmd.exe                                      244 procs
+     tiworker.exe                                      242 procs
+     mousocoreworker.exe                               236 procs
+     trustedinstaller.exe                              232 procs
+     gpupdate.exe                                      206 procs
+     wmiprvse.exe                                      167 procs
+     smartscreen.exe                                   150 procs
+     slui.exe                                          146 procs
+     sc.exe                                            145 procs
+     logonui.exe                                       143 procs
+     usoclient.exe                                     114 procs
+     smss.exe                                          102 procs
+     consent.exe                                        98 procs
+     securityhealthhost.exe                             92 procs
+     dmclient.exe                                       90 procs
+     ngentask.exe                                       83 procs
+     opera.exe                                          83 procs
+     identity_helper.exe                                76 procs
+
+Folder-level view: malware procs whose Image lives under 'splunkuniversalforwarder': 442 of 2929 malware processes total

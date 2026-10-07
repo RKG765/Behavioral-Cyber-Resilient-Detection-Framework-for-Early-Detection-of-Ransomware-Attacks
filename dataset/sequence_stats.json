@@ -1,0 +1,31 @@
+{
+  "pipeline": "50/50 Sequence Rule (with filter+truncate)",
+  "source_file": "dataset\\LMD-2023 [1.87M Elements]\\LMD-2023 [1.87M Elements]Checked\\Labelled LMD-2023\\LMD-2023 [1.87M Elements][Labelled]checked.csv",
+  "random_seed": 42,
+  "min_sequence_length_filter": 3,
+  "max_sequence_length_window": 50,
+  "stage_1_raw_sequences": {
+    "total": 15411,
+    "malware": 2886,
+    "benign": 12525
+  },
+  "stage_2_after_filter_truncate": {
+    "total": 4133,
+    "malware": 1149,
+    "benign": 2984,
+    "dropped": 11278
+  },
+  "stage_3_balanced_50_50": {
+    "total": 2298,
+    "malware": 1149,
+    "benign": 1149
+  },
+  "final_sequence_stats": {
+    "avg_length_malware": 22.19,
+    "avg_length_benign": 19.4,
+    "median_length_malware": 12.0,
+    "median_length_benign": 12.0,
+    "max_length": 50,
+    "min_length": 3
+  }
+}

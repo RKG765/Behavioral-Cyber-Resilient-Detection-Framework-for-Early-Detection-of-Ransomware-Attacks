@@ -1,0 +1,46 @@
+// how/style.scss
+// Enterprise Two-Tier EDR — Elite Cyber SOC Glassmorphism Theme
+// Design System: Dark Obsidian Slate, Electric Cyan, Neon Violet, Emerald Green, Amber Gold, Threat Crimson
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+$bg-deep: #050811;
+$bg-dark: #090E1A;
+$bg-surface: #0E1626;
+$bg-card: rgba(14, 22, 40, 0.75);
+$bg-card-hover: rgba(20, 32, 58, 0.85);
+
+$cyan-primary: #00F0FF;
+$cyan-bright: #38BDF8;
+$cyan-glow: rgba(0, 240, 255, 0.25);
+
+$emerald-primary: #10B981;
+$emerald-bright: #34D399;
+$emerald-glow: rgba(16, 185, 129, 0.25);
+
+$violet-primary: #8B5CF6;
+$violet-bright: #A78BFA;
+$violet-glow: rgba(139, 92, 246, 0.25);
+
+$amber-primary: #F59E0B;
+$amber-bright: #FBBF24;
+$amber-glow: rgba(245, 158, 11, 0.25);
+
+$rose-primary: #F43F5E;
+$rose-bright: #FB7185;
+$rose-glow: rgba(244, 63, 94, 0.25);
+
+$text-bright: #F8FAFC;
+$text-body: #CBD5E1;
+$text-muted: #94A3B8;
+$text-dim: #64748B;
+
+$border-subtle: rgba(56, 189, 248, 0.12);
+$border-card: rgba(255, 255, 255, 0.08);
+$border-glow: rgba(56, 189, 248, 0.35);
+
+$font-heading: 'Plus Jakarta Sans', sans-serif;
+$font-body: 'Inter', sans-serif;
+$font-mono: 'JetBrains Mono', monospace;
+
+// Base styles compiled directly in style.css for instant browser rendering

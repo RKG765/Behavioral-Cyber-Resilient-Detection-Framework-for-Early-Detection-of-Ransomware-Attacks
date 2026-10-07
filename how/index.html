@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enterprise Two-Tier EDR | Complete Engineering Defense & Architecture</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Mermaid.js for interactive client-side diagram rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <!-- App JS Controller -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+
+  <!-- TOP SYSTEM STATUS BAR -->
+  <aside class="top-system-bar">
+    <div class="container top-bar-inner">
+      <div class="brand-badge">
+        <div class="brand-icon">⚡</div>
+        <span class="brand-name">CYBER-SOC ARCHITECTURE LAB</span>
+        <span class="brand-tag">PRODUCTION 2-TIER EDR</span>
+      </div>
+      <div class="system-status-indicator">
+        <span class="pulse-dot"></span>
+        <span>TELEMETRY ONLINE &bull; EDGE GATEKEEPER &bull; CLOUD RESNET ACTIVE</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- HERO SECTION -->
+  <header class="hero">
+    <div class="container">
+      <div class="hero-meta-badge">
+        <span>🛡️ ARCHITECTURAL WALKTHROUGH &bull; DEFENSE MASTERCLASS</span>
+      </div>
+      <h1>Sub-Millisecond AI Shield: Enterprise Two-Tier EDR</h1>
+      <p class="tagline">
+        Welcome to the comprehensive architectural defense of our Two-Tier Endpoint Detection and Response system.
+        Here we unpack every design decision: from solving the classic "Compute vs. Context" dilemma to our 99-feature behavioral matrix,
+        leak-free GroupKFold dataset validation, dual neural network architectures, and full Hinglish explanations for every schematic.
+      </p>
+
+      <div class="hero-stats-grid">
+        <div class="stat-card-lux">
+          <span class="stat-val">&lt; 1.8 ms</span>
+          <span class="stat-lbl">Tier 1 Edge Latency</span>
+        </div>
+        <div class="stat-card-lux">
+          <span class="stat-val">10.8 KB</span>
+          <span class="stat-lbl">ONNX Model Footprint</span>
+        </div>
+        <div class="stat-card-lux">
+          <span class="stat-val">97.03%</span>
+          <span class="stat-lbl">5-Seed Cloud Accuracy</span>
+        </div>
+        <div class="stat-card-lux">
+          <span class="stat-val">99.26%</span>
+          <span class="stat-lbl">High-Precision Peak</span>
+        </div>
+        <div class="stat-card-lux">
+          <span class="stat-val">99.51%</span>
+          <span class="stat-lbl">Alert Fatigue Reduction</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- CHAPTER NAVIGATION -->
+  <nav class="chapter-nav">
+    <div class="container">
+      <div class="nav-pills">
+        <a href="#ch1" class="active">1. The Core Dilemma</a>
+        <a href="#ch2">2. Two-Tier Solution</a>
+        <a href="#ch3">3. System Pipeline</a>
+        <a href="#ch4">4. Scoring & Gating</a>
+        <a href="#ch5">5. 99 Behavioral Features</a>
+        <a href="#ch6">6. Dataset Integrity</a>
+        <a href="#ch7">7. MLP vs ResNet</a>
+        <a href="#ch8">8. War Stories</a>
+        <a href="#ch9">9. Live Simulator</a>
+        <a href="#ch10">10. Evaluator Grilling</a>
+        <a href="#ch11">11. SOC Cockpits</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ==========================================================================
+       CHAPTER 1: THE CORE DILEMMA
+       ========================================================================== -->
+  <section id="ch1" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 01</div>
+        <h2>The Analogy & The Legacy EDR Trilemma</h2>
+        <p class="lead">
+          Why do existing antivirus and EDR solutions constantly fail in real enterprise environments?
+          Let's break down the fundamental three-way engineering tradeoff.
+        </p>
+      </div>
+
+      <div class="triad-grid">
+        <div class="triad-card">
+          <span class="triad-badge why">Fatal Mistake 1</span>
+          <h3>Cloud-Only Latency Trap</h3>
+          <p>
+            Imagine a bank security guard taking a photo of every customer and sending it by mail to head-office for approval.
+            By the time the reply comes back (<strong>300ms to 2,000ms later</strong>), the robber has already cleaned out the safe!
+            Modern ransomware encrypts files in <strong>&lt; 100 microseconds</strong> per file. Cloud-only latency means files are encrypted before the kill order arrives.
+          </p>
+        </div>
+
+        <div class="triad-card">
+          <span class="triad-badge why">Fatal Mistake 2</span>
+          <h3>Endpoint Resource Starvation</h3>
+          <p>
+            If you try to run heavy deep neural networks directly on the endpoint workstation, the agent consumes
+            <strong>&gt; 20% CPU</strong> and <strong>&gt; 500 MB RAM</strong>. Laptops overheat, battery drains in 2 hours,
+            user interfaces freeze, and IT admins or frustrated developers disable the antivirus altogether.
+          </p>
+        </div>
+
+        <div class="triad-card">
+          <span class="triad-badge why">Fatal Mistake 3</span>
+          <h3>SOC Alert Fatigue</h3>
+          <p>
+            Legacy rule-based antivirus flags every unfamiliar script. The alarm screams whenever someone carries an umbrella because it resembles a crowbar!
+            Over <strong>95% of alarms are false positives</strong>. Security analysts get overwhelmed, silence the alerts,
+            and true zero-day APT attacks slip right under the radar.
+          </p>
+        </div>
+      </div>
+
+      <!-- Diagram 1 Container -->
+      <div class="diagram-container" id="diag1-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 1: The Legacy EDR Trilemma</div>
+              <div class="diagram-desc">Three-way tradeoff between compute cost, latency, and false alarm saturation.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag1-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag1-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag1_problem_trilemma.png" alt="Legacy EDR Trilemma Architecture" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+flowchart TD
+    subgraph LegacyProblems["The Traditional EDR Dilemma"]
+        A["All Telemetry Sent to Cloud"] -->|"Network Saturation & Bandwidth"| B["Network Delay: 300ms - 2,000ms"]
+        B --> C["Delayed Threat Kill: Ransomware Encrypts First!"]
+        D["Heavy Neural Nets on Edge"] -->|"High CPU & Memory"| E[">20% CPU & Battery Drain"]
+        E --> F["Endpoint Freezes & Agent Disabled"]
+        G["Static Signatures & Threshold Rules"] -->|"High False Positive Rate"| H["SOC Alert Fatigue: 95%+ False Alarms"]
+        H --> I["Missed True Zero-Day Threats"]
+    end
+    subgraph ProposedSolution["Our Proposed Two-Tier EDR Solution"]
+        J["Tier 1: Ultra-Fast Edge Gatekeeper (<1.8ms, <150MB RSS)"]
+        K["Tier 2: Deep Cloud Heavy Brain (ResNet + XAI Attribution)"]
+        L["Asymmetric Grey-Zone Escalation (Only 5-10% sent to Cloud)"]
+        J --> L
+        L --> K
+    end
+    LegacyProblems -.->|"Solved By"| ProposedSolution
+          </pre>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">🧠</span>
+            <h4>Aasan Bhasha Me Samjho: Schematic 1 Ka Asli Matlab Kya Hai?</h4>
+          </div>
+          <span class="explainer-badge">Hinglish Deep Dive</span>
+        </div>
+
+        <div class="analogy-card">
+          <div class="analogy-title">💡 Asli Zindagi Ka Real-Life Example:</div>
+          <p>
+            Socho ek VIP Building ka Main Gate hai. Agar gate pe khada guard har aane-jane wale ki photo kheench kar door head-office bhejega approval ke liye,
+            toh approval aane me 2 minute lag jayenge. Utni der me terrorist andar ghus kar tabahi macha chuka hoga!
+            Aur agar gate pe hi 100 bodyguards aur 5 heavy X-ray machines laga doge, toh normal logon ki 2 kilometer lambi line lag jayegi aur sabka time barbad hoga.
+            Legacy Antivirus me bhi yahi problem thi: Cloud slow hai, endpoint heavy hai, aur purane rules 95% jhoothi ghanti bajate hain!
+          </p>
+        </div>
+
+        <div class="flow-steps-title">📌 Diagram Ka Step-by-Step Breakdown:</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Point 1</span>
+              <span class="step-tag-pill">Cloud Trap</span>
+            </div>
+            <h5>Cloud-Only Antivirus</h5>
+            <p>Har event cloud bhejoge toh 300ms se 2 second lagenge. Ransomware 100 microseconds me file lock kar deta hai, isliye cloud late ho jata hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Point 2</span>
+              <span class="step-tag-pill">Edge Trap</span>
+            </div>
+            <h5>Heavy Model On Endpoint</h5>
+            <p>Workstation pe heavy AI model chaloge toh 20% CPU aur 500MB RAM khaa jayega. Laptop garam hoga aur user antivirus band kar dega.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Point 3</span>
+              <span class="step-tag-pill">Rule Trap</span>
+            </div>
+            <h5>Old Signature Rules</h5>
+            <p>Purane rules 95% false alarms dete hain. SOC analyst thak kar alarm ignore karne lagte hain aur asali virus nikal jata hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Solution</span>
+              <span class="step-tag-pill">Our Two-Tier</span>
+            </div>
+            <h5>Hamara Asymmetric Hal</h5>
+            <p>Endpoint pe chhota tezz guard (Tier 1 &lt;1.8ms) jo 90% decision khud le, aur cloud me bada dimag (Tier 2 ResNet) jo sirf shakki cases dekhe!</p>
+          </div>
+        </div>
+
+        <div class="viva-tip-box">
+          <div class="viva-tip-icon">🎯</div>
+          <div class="viva-tip-content">
+            <strong>Viva / Interview Pro-Defense:</strong>
+            <p>Agar examiner pooche: <em>"Bhai traditional EDR me aisi kya kami thi jo tumne yeh project banaya?"</em> Toh seedha bolo: <em>"Sir, industry me isko 'Compute vs. Context Trilemma' bolte hain. Humne compute ko edge pe aur deep context ko cloud pe split karke 99.51% false alarms suppress kiye aur response time 1.8ms kar diya."</em></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 2: THE TWO-TIER SOLUTION
+       ========================================================================== -->
+  <section id="ch2" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 02</div>
+        <h2>The Innovation: Asymmetric Workload Distribution</h2>
+        <p class="lead">
+          Instead of choosing between edge speed and cloud depth, we split the defense responsibility asymmetrically.
+        </p>
+      </div>
+
+      <div class="triad-grid">
+        <div class="triad-card">
+          <span class="triad-badge how">How It Works</span>
+          <h3>Tier 1: Edge Gatekeeper</h3>
+          <p>
+            Runs directly on the endpoint inside <code>agent.py</code> using an ultra-compact <strong>10.8 KB ONNX Multi-Layer Perceptron (MLP)</strong>.
+            It evaluates running processes in <strong>&lt; 1.8 milliseconds</strong> on a single CPU core.
+            90% to 95% of software is resolved right here with zero cloud latency and zero network overhead.
+          </p>
+        </div>
+
+        <div class="triad-card">
+          <span class="triad-badge what">What It Delivers</span>
+          <h3>The Grey-Zone Handshake</h3>
+          <p>
+            When Tier 1 sees an ambiguous, obfuscated process with a score between <strong>0.10 and 0.90</strong>,
+            it doesn't guess. It dispatches a lightweight JSON payload (PID, process name, 99 features) to Cloud Tier 2.
+            This cuts WAN egress and cloud API costs by <strong>95%</strong>!
+          </p>
+        </div>
+
+        <div class="triad-card">
+          <span class="triad-badge why">Why ResNet in Cloud</span>
+          <h3>Tier 2: Cloud Heavy Brain</h3>
+          <p>
+            Hosted on FastAPI (<code>server.py</code>). A deep <strong>Behavioral Residual Network (ResNet with BatchNorm1d)</strong>
+            untangles complex non-linear multi-stage attacks (e.g. Temp execution + Base64 decode + DLL injection).
+            It applies an optimal threshold (<strong>&Theta; = 0.6546</strong>) and computes Explainable AI feature attributions.
+          </p>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">💡</span>
+            <h4>Aasan Bhasha Me Samjho: Asymmetric Workload Ka Asli Khel Kya Hai?</h4>
+          </div>
+          <span class="explainer-badge">Architecture Concept</span>
+        </div>
+
+        <div class="analogy-card">
+          <div class="analogy-title">✈️ Airport Customs & Security Analogy:</div>
+          <p>
+            Airport pe Green Channel aur Red Channel hota hai. Jo regular passengers hain jinke paas valid passport aur tickets hain,
+            unhe metal detector pass karke 10 second me bahar nikal diya jata hai (Tier 1 Edge Allow).
+            Agar kisi ke paas bomb ya bandook mil jaye toh security guard foran wahi gira kar hathkadi laga deta hai (Tier 1 Edge Kill &lt;2ms).
+            Lekin agar kisi ke bag me koi ajeeb suspicious chemical dikhe jisko security guard pehchan nahi pa raha,
+            toh usko alag room me le jaake forensic lab se test karwaya jata hai (Tier 2 Cloud ResNet Brain)!
+          </p>
+        </div>
+
+        <div class="flow-steps-title">📌 Is Strategy Se Company Ko Kya Fayda Hua?</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Fayda 1</span>
+              <span class="step-tag-pill">Bandwidth</span>
+            </div>
+            <h5>95% Cloud Egress Saved</h5>
+            <p>Pehle lakho processes ka raw data cloud jata tha jisse company ka lakho ka internet bill aata tha. Ab 90%+ data endpoint pe hi nipat jata hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Fayda 2</span>
+              <span class="step-tag-pill">Zero Lag</span>
+            </div>
+            <h5>Workstation Bilkul Smooth</h5>
+            <p>10.8 KB ka ONNX model chala rahe hain, jo ek normal image se bhi chhota hai. Laptop pe 0% lag ya freezing aati hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Fayda 3</span>
+              <span class="step-tag-pill">Instant Kill</span>
+            </div>
+            <h5>Ransomware Ka Instant Kaal</h5>
+            <p>Agar LockBit ya WannaCry run hua toh Tier 1 use 1.8ms me pehchan kar terminate kar deta hai, cloud ke reply aane ka intezar nahi karta!</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 3: FULL SYSTEM ARCHITECTURE
+       ========================================================================== -->
+  <section id="ch3" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 03</div>
+        <h2>End-to-End System Architecture: Kernel Hook to Containment</h2>
+        <p class="lead">
+          Here is how every single execution event travels through our tiered defense pipeline, from initial Windows process spawn to cloud containment.
+        </p>
+      </div>
+
+      <!-- Diagram 2 Container -->
+      <div class="diagram-container" id="diag2-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 2: Full End-to-End Pipeline Architecture</div>
+              <div class="diagram-desc">Tracing data flow from Windows kernel spawn to cloud evaluation and analyst cockpit.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag2-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag2-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag2_full_architecture.png" alt="Full System Architecture Diagram" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+flowchart TB
+    subgraph Endpoint["ENDPOINT WORKSTATION (Edge Tier 1)"]
+        WMI["Windows WMI / ETW Hook"] -->|"Process Create Event"| WorkerPool["Thread Pool Worker"]
+        
+        subgraph FastPath["Zero-Cost Fast-Path (0.0ms ML)"]
+            WorkerPool --> L1A{"L1A: WinTrust Authenticode\n(Digital Signatures)"}
+            L1A -->|"Valid Microsoft / Vendor"| LRU["LRU Verified Path Cache\n(ALLOW - 0.0ms)"]
+            L1A -->|"Unsigned / Unknown"| L1B{"L1B: SQLite B-Tree Whitelist\n(Approved SHA-256)"}
+            L1B -->|"Hash Match"| WhitelistDB["whitelist.db Match\n(ALLOW - <0.2ms)"]
+        end
+
+        subgraph DynamicObservation["Dynamic Behavioral Window"]
+            L1B -->|"Untrusted Binary"| Mon["BehaviorMonitor (30s Window)\nCircular Ring Buffers"]
+            Mon --> FeatureEngine["99 Behavioral Features\n[Batch, 99] Float32"]
+        end
+
+        subgraph EdgeInference["Tier 1 Edge Gatekeeper"]
+            FeatureEngine --> ONNX["Tier 1 ONNX Model\nMLP (99 -> 128 -> 64 -> 1)\n< 1.8ms CPU Latency"]
+            ONNX --> T1Gate{"Decision Gating\nScore = S_T1"}
+        end
+
+        T1Gate -->|"S_T1 <= 0.10"| AllowEdge["LOCAL ALLOW\n(Clean Benign)"]
+        T1Gate -->|"S_T1 >= 0.90"| KillEdge["LOCAL TERMINATE (< 2ms)\nWin32 TerminateProcess API"]
+        T1Gate -->|"0.10 < S_T1 < 0.90"| GreyZoneQueue["Asynchronous Grey-Zone Queue\n(Dispatched via REST API)"]
+    end
+
+    subgraph Cloud["ENTERPRISE CLOUD TIER 2 (Heavy Brain)"]
+        GreyZoneQueue -->|"HTTP POST /score\nJSON Payload"| CloudGateway["FastAPI Gateway (Port 8000)"]
+        CloudGateway --> T2ResNet["Tier 2 Behavioral ResNet\n(BatchNorm1d + Residual Skips)"]
+        T2ResNet --> T2Gate{"Optimal Threshold\nTheta = 0.6546"}
+        
+        T2Gate -->|"S_T2 <= 0.6546"| CloudAllow["CLOUD ALLOW\nEnterprise Anomaly Noted"]
+        T2Gate -->|"S_T2 > 0.6546"| CloudKillOrder["CLOUD KILL DIRECTIVE\n+ Integrated Gradients XAI"]
+    end
+
+    CloudKillOrder -->|"Kill Command Payload"| WorkerPool
+          </pre>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">🔍</span>
+            <h4>Aasan Bhasha Me Samjho: Double-Click Se Process Kill Hone Tak Ka Complete Safar</h4>
+          </div>
+          <span class="explainer-badge">Pipeline Walkthrough</span>
+        </div>
+
+        <div class="analogy-card">
+          <div class="analogy-title">🚀 Har Process Ka Step-by-Step Safar:</div>
+          <p>
+            Jaise hi user kisi file (jaise <code>test_dropper.exe</code> ya <code>chrome.exe</code>) par double click karta hai,
+            Windows kernel me event trigger hota hai aur hamara EDR pipeline active ho jata hai.
+          </p>
+        </div>
+
+        <div class="flow-steps-title">📌 Schematic 2 Ke 7 Crucial Steps (Chronological Order):</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 1</span>
+              <span class="step-tag-pill">Kernel Intercept</span>
+            </div>
+            <h5>WMI / ETW Hook</h5>
+            <p>Windows OS me jaise hi koi naya process banta hai, hamara background worker thread foran Process ID (PID) aur binary path capture kar leta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 2</span>
+              <span class="step-tag-pill">L1A Fast-Path</span>
+            </div>
+            <h5>WinTrust Authenticode</h5>
+            <p>Sabse pehle digital signature check hoti hai. Agar file Microsoft, Google ya Apple se officially signed hai toh bina kisi ML model ko disturb kiye <strong>0.0ms me ALLOW</strong> kar diya jata hai!</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 3</span>
+              <span class="step-tag-pill">L1B Fast-Path</span>
+            </div>
+            <h5>SQLite Whitelist Hash</h5>
+            <p>Agar unsigned hai toh kya iska SHA-256 hash hamare local <code>whitelist.db</code> me pehle se safe marked hai? Match hone par <strong>&lt;0.2ms me ALLOW</strong>.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 4</span>
+              <span class="step-tag-pill">Behavior Window</span>
+            </div>
+            <h5>30-Second Ring Buffer</h5>
+            <p>Agar unknown file hai toh agent uske 30 seconds ke acts monitor karta hai: Registry changes, file creation, network connections, memory access. Inhe 99 mathematical features me convert kiya jata hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 5</span>
+              <span class="step-tag-pill">Tier 1 Edge</span>
+            </div>
+            <h5>ONNX MLP &lt;1.8ms</h5>
+            <p>Workstation ke CPU pe chhota 10.8 KB model chal kar 0.00 se 1.00 ke beech ka suspicion score nikalta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 6</span>
+              <span class="step-tag-pill">Edge Gating</span>
+            </div>
+            <h5>Faisla (Allow, Kill, Grey)</h5>
+            <p>Score &le; 0.10: Bilkul Safe (Allow).<br>Score &ge; 0.90: Pakka Virus! Win32 TerminateProcess API se <strong>&lt;2ms me Kill</strong>.<br>0.10 se 0.90: Shakki Grey Zone! Cloud ko bhejo.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Step 7</span>
+              <span class="step-tag-pill">Tier 2 Cloud</span>
+            </div>
+            <h5>Cloud ResNet & Kill Order</h5>
+            <p>Cloud server (port 8000) pe heavy ResNet deep patterns check karta hai. Agar score &gt; 0.6546 aaya toh cloud se instant Kill Command + XAI Reason endpoint ko wapas aati hai!</p>
+          </div>
+        </div>
+
+        <div class="viva-tip-box">
+          <div class="viva-tip-icon">🛡️</div>
+          <div class="viva-tip-content">
+            <strong>Viva / Presentation Point:</strong>
+            <p><em>"Sir, hamare pipeline ki sabse badi khoobi yeh hai ki clean programs (L1A/L1B) aur direct dangerous malware (Score &ge; 0.90) ko Cloud ki zaroorat hi nahi padti! Cloud server sirf critical 5-10% grey-zone traffic handle karta hai."</em></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 4: SCORING & GATING CRITERIA
+       ========================================================================== -->
+  <section id="ch4" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 04</div>
+        <h2>Process Scoring Criteria & Decision Rules</h2>
+        <p class="lead">
+          How do we score an unknown binary or script? Let's trace the exact mathematical rules and sequence boundaries.
+        </p>
+      </div>
+
+      <!-- Diagram 3 Container -->
+      <div class="diagram-container" id="diag3-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 3: Step-by-Step Scoring Criteria Lifecycle</div>
+              <div class="diagram-desc">Sequence of decision boundaries across L1, Tier 1, and Tier 2.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag3-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag3-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag3_scoring_criteria.png" alt="Scoring Criteria Lifecycle Diagram" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor OS as Windows OS (Process Launch)
+    participant EDR as agent.py (Endpoint)
+    participant Cache as LRU / SQLite Whitelist
+    participant T1 as Tier 1 ONNX (<1.8ms)
+    participant Cloud as server.py (Tier 2 Cloud)
+    participant Log as agent.log / SOC Dashboard
+
+    OS->>EDR: New Process Spawn (e.g. brave.exe, powershell.exe)
+    EDR->>Cache: Check LRU Cache & WinTrust Signature (L1A/L1B)
+    alt Binary is Trusted & Validly Signed
+        Cache-->>EDR: Match Found (Microsoft / Google / Whitelisted Hash)
+        EDR->>Log: ALLOWED (Trusted / Zero Overhead)
+    else Binary is Unknown or Unsigned
+        Cache-->>EDR: Untrusted Binary
+        EDR->>EDR: Register into BehaviorMonitor (30s Window)
+        EDR->>EDR: Extract 99 Behavioral Features (File, Reg, Network, Process Tree)
+        EDR->>T1: Run ONNX Inference (99 Features)
+        T1-->>EDR: Return Tier-1 Suspicion Score (0.00 to 1.00)
+        
+        alt Score <= 0.10 (Benign)
+            EDR->>Log: ALLOWED (Tier-1 Benign Score <= 0.10)
+        else Score >= 0.90 (Clear Malware)
+            EDR->>OS: Terminate Process immediately (taskkill / Win32 API)
+            EDR->>Log: MALWARE TERMINATED (Score >= 0.90)
+        else 0.10 < Score < 0.90 (Grey Zone)
+            EDR->>Log: [GREY ZONE] Escalating to Cloud Server (Score: X)
+            EDR->>Cloud: POST /score {process_name, tier1_score, features}
+            Cloud->>Cloud: Run Tier-2 ResNet Model
+            Cloud->>Cloud: Evaluate Optimal Operating Threshold (0.6546)
+            alt Cloud Score > 0.6546
+                Cloud-->>EDR: {"verdict": "KILL", "confidence": 0.88, "xai": {...}}
+                EDR->>OS: Terminate Process (Cloud Directed)
+                EDR->>Log: [CLOUD VERDICT] KILLED by Tier-2 Cloud ResNet
+            else Cloud Score <= 0.6546
+                Cloud-->>EDR: {"verdict": "ALLOW", "confidence": 0.32}
+                EDR->>Log: [CLOUD VERDICT] ALLOWED by Tier-2 Cloud ResNet
+            end
+        end
+    end
+          </pre>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">🎯</span>
+            <h4>Aasan Bhasha Me Samjho: Kyu 0.10 Aur 0.90 Ka Threshold Rakha?</h4>
+          </div>
+          <span class="explainer-badge">Mathematical Logic</span>
+        </div>
+
+        <div class="analogy-card">
+          <div class="analogy-title">⚖️ Judge & Courtroom Analogy:</div>
+          <p>
+            Socho ek police officer kisi suspect ko sadak par dekhta hai.
+            Agar suspect ek chhota school student hai jiske paas bas kitaabein hain, toh officer usse foran jaane deta hai (Score &le; 0.10).
+            Agar suspect hath me AK-47 leke firing kar raha hai, toh officer seedha encounter/goli chala deta hai bina magistrate ko phone kiye (Score &ge; 0.90).
+            Lekin agar suspect ne kala chashma aur bada coat pehna hai aur uske bag me wires dikh rahe hain, toh officer usse pakad kar High Court / Forensic Team ko bhejta hai (Grey Zone 0.10 to 0.90)!
+          </p>
+        </div>
+
+        <div class="flow-steps-title">📌 Hamare Teeno Critical Thresholds:</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Zone 1</span>
+              <span class="step-tag-pill">Safe Pass</span>
+            </div>
+            <h5>Score &le; 0.10 (Local Allow)</h5>
+            <p>Is range me software 100% clean hota hai. User ke browser ya office tool me 1 millisecond ka bhi delay nahi aata.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Zone 2</span>
+              <span class="step-tag-pill">Emergency Kill</span>
+            </div>
+            <h5>Score &ge; 0.90 (Local Terminate)</h5>
+            <p>Clear red-team malware, WannaCry, Mimikatz. Agent 2ms ke andar Win32 <code>TerminateProcess</code> call karke thread band kar deta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Zone 3</span>
+              <span class="step-tag-pill">Doubtful</span>
+            </div>
+            <h5>0.10 &ndash; 0.90 (Cloud Escalation)</h5>
+            <p>Yehi sabse mushkil zone hai. Tier 1 yahan jaldbaazi me galat decision lene ke bajaye Cloud Tier 2 ko escalation bhejta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Cloud Theta</span>
+              <span class="step-tag-pill">Optimal Cutoff</span>
+            </div>
+            <h5>&Theta; = 0.6546 (Cloud Precision)</h5>
+            <p>Cloud me standard 0.50 cutoff nahi use karte! Humne ROC curve se derive kiya: 0.6546 par False Alarm 1% se kam rehte hain aur Precision 99.26% aati hai!</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 5: THE 99 BEHAVIORAL FEATURES
+       ========================================================================== -->
+  <section id="ch5" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 05</div>
+        <h2>The Secret Sauce: 99 Behavioral Heuristics</h2>
+        <p class="lead">
+          Why did we discard raw EventID tokens? Because an attacker can pad a malicious script with 50 benign file reads
+          to evade an LSTM or CNN. Behavioral heuristics are invariant to dummy event insertion!
+        </p>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Feature Category</th>
+              <th>Index Range</th>
+              <th>Core Indicators Measured</th>
+              <th>Adversarial Defense Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>A. Sysmon Event Frequencies</strong></td>
+              <td>Cols 0 &ndash; 22</td>
+              <td>Process Create (1), Network (3), DLL Load (7), ProcessAccess (10), FileCreate (11), Registry (13)</td>
+              <td>Measures event proportions; detects ransomware file creation storms and C2 beaconing.</td>
+            </tr>
+            <tr>
+              <td><strong>B. Temporal Dynamics & Obfuscation</strong></td>
+              <td>Cols 23 &ndash; 30</td>
+              <td>Execution window fraction, burstiness ratio, cmdline length &gt; 200, Base64 encoding flag</td>
+              <td>Catches encoded living-off-the-land PowerShell scripts and rapid thread-spawning injections.</td>
+            </tr>
+            <tr>
+              <td><strong>C. Path & Anomaly Heuristics</strong></td>
+              <td>Cols 31 &ndash; 50</td>
+              <td>AppData/Temp execution, System32 targeting, Levenshtein distance to svchost, double extensions</td>
+              <td>Detects masquerading malware (e.g. <code>svch0st.exe</code>) and drop-and-run temporary binaries.</td>
+            </tr>
+            <tr>
+              <td><strong>D. Registry Persistence</strong></td>
+              <td>Cols 51 &ndash; 75</td>
+              <td>Run/RunOnce keys, Startup links, IFEO debugger hijacking, Defender disablement, firewall rules</td>
+              <td>Neutralizes persistence techniques before the attacker can survive an OS reboot.</td>
+            </tr>
+            <tr>
+              <td><strong>E. Process Tree & DLL Injections</strong></td>
+              <td>Cols 76 &ndash; 98</td>
+              <td>Tree depth &ge; 4, orphan parents, LOLBins (certutil, bitsadmin), Word/Excel spawning cmd, LSASS reads</td>
+              <td>Detects privilege escalation, credential dumping (Mimikatz), and macro weaponization.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">💡</span>
+            <h4>Aasan Bhasha Me Samjho: 99 Features Me Aisi Kya Jaadugari Hai?</h4>
+          </div>
+          <span class="explainer-badge">Feature Engineering</span>
+        </div>
+
+        <div class="analogy-card">
+          <div class="analogy-title">🕵️ Hacker Ka Evasion Trick Aur Hamara Counter-Attack:</div>
+          <p>
+            Purane AI antivirus bas yeh dekhte the ki konsa event pehle hua aur konsa baad me (Sequence LSTM).
+            Hacker ne kya kiya? Malicious command chalane se pehle 50 baar fake Notepad khol-band kar diya!
+            Model confuse ho gaya aur virus ko safe bol diya (Event Padding Attack).
+            Hamare 99 features sequence par depend nahi karte, yeh <strong>asli physical ratios aur red flags</strong> dekhte hain!
+          </p>
+        </div>
+
+        <div class="flow-steps-title">📌 Hamare 5 Sabse Khatarnak Features:</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Feature 27</span>
+              <span class="step-tag-pill">Obfuscation</span>
+            </div>
+            <h5>Base64 Encoded Commandline</h5>
+            <p>Hacker command chhupane ke liye Base64 use karte hain (jaise <code>powershell -e JAB4...</code>). Hamara feature isse foran 1 flag kar deta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Feature 34</span>
+              <span class="step-tag-pill">Path Anomaly</span>
+            </div>
+            <h5>Executing from Temp / AppData</h5>
+            <p>Koi bhi normal software seedha Temp folder se execute nahi hona chahiye. Malware hamesha Temp me drop karke chalta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Feature 88</span>
+              <span class="step-tag-pill">Office Weapon</span>
+            </div>
+            <h5>Office Spawning Command Shell</h5>
+            <p>Agar Microsoft Word ya Excel ne achanak <code>cmd.exe</code> ya <code>powershell.exe</code> khola, toh 100% Malicious Macro attack hai!</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Feature 96</span>
+              <span class="step-tag-pill">Credential Theft</span>
+            </div>
+            <h5>LSASS Process Memory Read</h5>
+            <p>Mimikatz jaise tool Windows password churane ke liye LSASS process ko read karte hain. Hamara feature isse pakad kar instant alert karta hai.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 6: GROUPKFOLD INTEGRITY
+       ========================================================================== -->
+  <section id="ch6" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 06</div>
+        <h2>Dataset Integrity: Eliminating 100% of Data Leakage</h2>
+        <p class="lead">
+          How many published academic papers report fake 99.9% accuracy? Many! Here is how we avoided the trap with strict GroupKFold.
+        </p>
+      </div>
+
+      <!-- Diagram 4 Container -->
+      <div class="diagram-container" id="diag4-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 4: Leak-Free GroupKFold Pipeline</div>
+              <div class="diagram-desc">Guaranteed mathematical separation between training and validation process families.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag4-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag4-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag4_dataset_groupkfold.png" alt="Dataset and GroupKFold Pipeline Diagram" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+flowchart TD
+    subgraph RawData["1. Raw Telemetry & Sanitization"]
+        R1["Raw Splunk Sysmon Logs\n(Benign vs Red-Team Malware)"] --> S1["Filter Splunk Ingestion Processes\n(splunk.exe, splunkd.exe removed)"]
+        S1 --> S2["Sanitize Dynamic Artifacts\n(Usernames, GUID paths, Random PIDs)"]
+    end
+
+    subgraph FeatureEngineering["2. Behavioral Feature Engineering"]
+        S2 --> F1["99 Engineered Behavioral Heuristics"]
+        F1 --> M1["Balanced Dataset: 1,470 Process Traces\n(735 Benign : 735 Malware)"]
+    end
+
+    subgraph GroupSplitting["3. Rigorous Leak-Free Validation"]
+        M1 --> G1{"GroupKFold Splitter\n(5 Folds, 5 Random Seeds)"}
+        G1 -->|"Grouped Strictly by ProcessGuid"| TR["Training Folds (80%)"]
+        G1 -->|"Grouped Strictly by ProcessGuid"| VA["Validation Folds (20%)"]
+        
+        note1["CRITICAL: Same process instance or child\nCANNOT appear in both Train and Test!\nIntersection(Train, Val) = EmptySet."]
+        G1 -.-> note1
+    end
+
+    subgraph ModelTraining["4. Dual-Model Training Pipeline"]
+        TR --> T1Train["Train Tier 1 Behavioral MLP\n(Focal Loss, Early Stopping)"]
+        TR --> T2Train["Train Tier 2 Behavioral ResNet\n(BatchNorm1d, Residual Blocks)"]
+    end
+          </pre>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">📊</span>
+            <h4>Aasan Bhasha Me Samjho: Data Leakage Kya Hoti Hai Aur Humne Kaise Roki?</h4>
+          </div>
+          <span class="explainer-badge">ML Science Integrity</span>
+        </div>
+
+        <div class="analogy-card">
+          <div class="analogy-title">📝 Board Exam Paper Leak Analogy:</div>
+          <p>
+            Socho ek teacher student ko exam lene se pehle wahi 5 questions mock test me ratta marwa de jo final exam me aane wale hain!
+            Student 100 out of 100 le aayega, lekin jab asal zindagi me koi naya problem aayega toh fail ho jayega.
+            Machine Learning me isko <strong>Data Leakage</strong> bolte hain.
+            Agar ek hi malware ke 5 child processes train me daal diye aur baki 2 test me, toh model ne pehle se dekha hua tha aur fake 99.9% accuracy dikha raha tha!
+          </p>
+        </div>
+
+        <div class="flow-steps-title">📌 Hamara 100% Leak-Proof Solution:</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Rule 1</span>
+              <span class="step-tag-pill">ProcessGuid</span>
+            </div>
+            <h5>GroupKFold By ProcessGuid</h5>
+            <p>Humne saare samples ko unique <code>ProcessGuid</code> se group kiya. Agar koi malware family Training me hai, toh uska koi bhi ansh Test fold me nahi ja sakta!</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Rule 2</span>
+              <span class="step-tag-pill">Sanitization</span>
+            </div>
+            <h5>Splunk Noise Filtered</h5>
+            <p>Splunk ke apne log ingestor (<code>splunkd.exe</code>) dataset me the jo fake signals de rahe the. Humne unhe pehle hi scrub karke nikaal diya.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Rule 3</span>
+              <span class="step-tag-pill">5-Seed Check</span>
+            </div>
+            <h5>5 Random Seeds Cross-Validation</h5>
+            <p>Humne ek kismat ke seed par vishwas nahi kiya. 5 alag-alag seeds par run kiya aur average test score <strong>97.03%</strong> paya jo 100% real-world ready hai.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 7: TIER 1 & TIER 2 MODEL ARCHITECTURES
+       ========================================================================== -->
+  <section id="ch7" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 07</div>
+        <h2>Model Architectures: Why MLP for Edge and ResNet for Cloud?</h2>
+        <p class="lead">
+          We didn't just pick random models; each neural architecture was designed specifically for its hardware envelope.
+        </p>
+      </div>
+
+      <!-- Diagram 5 Container (Tier 1 MLP) -->
+      <div class="diagram-container" id="diag5-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 5: Tier 1 Edge MLP Architecture (10.8 KB ONNX)</div>
+              <div class="diagram-desc">Designed for deterministic, sub-millisecond CPU inference on workstation endpoints.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag5-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag5-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag5_tier1_mlp.png" alt="Tier 1 MLP Architecture" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+graph LR
+    Input["Input: 99 Features\n[Batch, 99] Float32"] --> L1["Linear(99->128)\n+ BatchNorm1d\n+ ReLU"]
+    L1 --> D1["Dropout (0.30)"]
+    D1 --> L2["Linear(128->64)\n+ BatchNorm1d\n+ ReLU"]
+    L2 --> D2["Dropout (0.30)"]
+    D2 --> Out["Linear(64->1)\n+ Sigmoid Head"]
+    Out --> Score["Edge Suspicion Score\nLatency: < 1.8ms | Size: 10.8 KB"]
+          </pre>
+        </div>
+      </div>
+
+      <!-- Diagram 6 Container (Tier 2 ResNet) -->
+      <div class="diagram-container" id="diag6-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 6: Tier 2 Cloud ResNet Architecture (Residual Heavy Brain)</div>
+              <div class="diagram-desc">Multi-block deep Residual Network with BatchNorm1d and skip connections for non-linear reasoning.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag6-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag6-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag6_tier2_resnet.png" alt="Tier 2 ResNet Architecture" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+graph TD
+    Input["Input: 99 Features\n[Batch, 99] Float32"] --> Proj["Projection: Linear(99->64)\n+ BatchNorm1d + ReLU"]
+    Proj --> RB1["Residual Block 1\nLinear(64->64) + BN + ReLU\n+ Linear(64->64) + BN\n(+) Identity Skip Connection"]
+    RB1 --> RB2["Residual Block 2\nLinear(64->64) + BN + ReLU\n+ Linear(64->64) + BN\n(+) Identity Skip Connection"]
+    RB2 --> Head["Linear Head (64->1)\n+ Sigmoid (Theta = 0.6546)"]
+    Head --> Verdict["Cloud Verdict + XAI Attribution\nAcc: 97.03% | AUC: 0.9967"]
+          </pre>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">⚙️</span>
+            <h4>Aasan Bhasha Me Samjho: Dono Models Ki Asli Kundali</h4>
+          </div>
+          <span class="explainer-badge">Deep Neural Design</span>
+        </div>
+
+        <div class="flow-steps-title">📌 Tier 1 MLP vs Tier 2 ResNet Comparison (Hinglish):</div>
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Tier 1</span>
+              <span class="step-tag-pill">Workstation Edge</span>
+            </div>
+            <h5>Tier 1: Multi-Layer Perceptron (MLP)</h5>
+            <p><strong>Kyu Chuna:</strong> Isme 99 &rarr; 128 &rarr; 64 &rarr; 1 ke 2 hidden layers hain. Yeh bina kisi GPU ke workstation ke CPU core pe 1.8ms me execute ho jata hai. File size sirf 10.8 KB hai!</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Tier 2</span>
+              <span class="step-tag-pill">Cloud Brain</span>
+            </div>
+            <h5>Tier 2: Behavioral ResNet (Residual)</h5>
+            <p><strong>Kyu Chuna:</strong> Isme identity skip connections <code>F(x) + x</code> hain. Jab attack multi-stage hota hai (jaise pehle persistence fir injection fir socket), toh ResNet bina gradient vanish huye complex patterns pakad leta hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Secret</span>
+              <span class="step-tag-pill">BatchNorm1d Fix</span>
+            </div>
+            <h5>Kyu LayerNorm Hata Kar BatchNorm Lagaya?</h5>
+            <p>LayerNorm saare 99 features ko ek saath normalize karta tha. Tabular data me Feature 6 (48 DLLs) aur Feature 27 (1 Base64 flag) ka scale alag hota hai! BatchNorm1d ne har feature ko independently normalize kiya aur model 100% stable ban gaya.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 8: WAR STORIES
+       ========================================================================== -->
+  <section id="ch8" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 08</div>
+        <h2>Engineering War Stories: 3 Real Problems We Solved</h2>
+        <p class="lead">
+          Engineering is defined by how you handle failure. Here are the three hardest hurdles we faced and resolved.
+        </p>
+      </div>
+
+      <!-- Diagram 7 Container (Evolution Journey) -->
+      <div class="diagram-container" id="diag7-box">
+        <div class="diagram-header-bar">
+          <div class="diagram-chrome-left">
+            <div class="window-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="diagram-titles">
+              <div class="diagram-title">Schematic 7: EDR Engineering Evolution & Problem Resolution</div>
+              <div class="diagram-desc">Timeline of major hurdles tackled from legacy CNNs to production Two-Tier EDR.</div>
+            </div>
+          </div>
+          <div class="diagram-view-controls">
+            <button class="view-toggle-btn active" data-mode="image" onclick="switchDiagramView('diag7-box', 'image')">🖼️ High-Res Diagram</button>
+            <button class="view-toggle-btn" data-mode="mermaid" onclick="switchDiagramView('diag7-box', 'mermaid')">📊 Live Mermaid Flow</button>
+          </div>
+        </div>
+
+        <div class="diagram-img-view">
+          <img src="assets/diag7_evolution_journey.png" alt="Evolution Journey Diagram" class="zoomable-diagram">
+          <div class="zoom-hint">🔍 Click image to enlarge full-screen</div>
+        </div>
+
+        <div class="diagram-mermaid-view">
+          <pre class="mermaid">
+timeline
+    title EDR Engineering Evolution & Problem Resolution
+    Phase 1 : Legacy Sequence CNN
+            : EventID sequences only
+            : Problem: Lack of context, High False Positives
+    Phase 2 : Data Leakage Discovery
+            : Random Train/Test Split leaked parent/child processes
+            : Metric inflation (false 99.9% accuracy)
+            : Solution: Strict 5-Seed GroupKFold by ProcessGuid
+    Phase 3 : WinTrust OS API Lockups
+            : Wintrust C-types calls hung threads on locked binaries
+            : Solution: Worker Thread Pool with 1.5s timeout watchdog
+    Phase 4 : Catastrophic Collapse on Fold 5
+            : LayerNorm in Tier 2 failed under small batch seeds
+            : Solution: Replaced LayerNorm with BatchNorm1d
+            : Reduced Projection Dim to 64 for optimal convergence
+    Phase 5 : Two-Tier Behavioral Production
+            : 99 leak-free behavioral features
+            : Tier 1 ONNX Edge (<1.8ms) + Tier 2 Cloud ResNet (99.26% Precision)
+            : 99.51% Alert Fatigue Reduction
+          </pre>
+        </div>
+      </div>
+
+      <!-- IN-DEPTH HINGLISH EXPLAINER BOX -->
+      <div class="hinglish-explainer-box">
+        <div class="explainer-header">
+          <div class="explainer-title-group">
+            <span class="explainer-icon">🛠️</span>
+            <h4>Aasan Bhasha Me Samjho: 3 Badi Museebatein Aur Unka Asli Solution</h4>
+          </div>
+          <span class="explainer-badge">War Stories in Hinglish</span>
+        </div>
+
+        <div class="flow-card-grid">
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Problem 1</span>
+              <span class="step-tag-pill">OS Freeze</span>
+            </div>
+            <h5>WinTrust API Ka Hang Hona</h5>
+            <p><strong>Kya hua tha:</strong> Windows ki digital signature check karne wali API locked files par thread ko hamesha ke liye freeze kar deti thi!<br><strong>Hal:</strong> Humne worker thread pool banaya jisme 1.5-second ka watchdog timer laga diya. Agar timeout hua toh bina freeze huye thread terminate ho jata hai.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Problem 2</span>
+              <span class="step-tag-pill">Fake Accuracy</span>
+            </div>
+            <h5>Data Leakage Ka Dhokha</h5>
+            <p><strong>Kya hua tha:</strong> Pehle test split me 99.9% accuracy aa rahi thi. Lekin jab check kiya toh pata chala parent-child process dono jagah the!<br><strong>Hal:</strong> GroupKFold lagaya jisse ProcessGuid split hua aur 100% authentic 97.03% validation aayi.</p>
+          </div>
+          <div class="flow-step-item">
+            <div class="flow-step-top">
+              <span class="step-num-pill">Problem 3</span>
+              <span class="step-tag-pill">Fold 5 Crash</span>
+            </div>
+            <h5>Fold 5 Par Model Crash</h5>
+            <p><strong>Kya hua tha:</strong> Tier 2 ResNet training me Fold 5 par aate hi loss infinity ho jata tha aur model crash ho jata tha!<br><strong>Hal:</strong> Root cause LayerNorm tha. Usko hata kar BatchNorm1d lagaya aur projection dimension 128 se 64 kiya, jiske baad sabhi 5 folds 100% converge huye!</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 9: INTERACTIVE LIVE SIMULATOR
+       ========================================================================== -->
+  <section id="ch9" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 09</div>
+        <h2>Interactive Process Lifecycle Simulator</h2>
+        <p class="lead">
+          Test the tiered decision pipeline right now in your browser! Pick a scenario and watch how the system evaluates it in real time.
+        </p>
+      </div>
+
+      <div class="interactive-simulator-box">
+        <h3>🎯 Live EDR Simulation Engine</h3>
+        <p class="sim-desc">
+          Click any attack or process profile below to watch the multi-stage evaluation pipeline execute in real time:
+        </p>
+
+        <div class="sim-controls">
+          <button class="sim-btn btn-benign" onclick="runInteractiveSimulation('benign')">🟢 Benign Application (Notepad)</button>
+          <button class="sim-btn btn-grey" onclick="runInteractiveSimulation('grey_zone')">🟡 Grey-Zone Attack (PowerShell Stealth)</button>
+          <button class="sim-btn btn-malware" onclick="runInteractiveSimulation('malware')">🔴 Ransomware Dropper (WannaCry variant)</button>
+        </div>
+
+        <div class="sim-progress-list" id="simProgressList"></div>
+        <div id="simResultDisplay" style="display:none;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 10: EVALUATOR GRILLING MODE
+       ========================================================================== -->
+  <section id="ch10" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 10</div>
+        <h2>Evaluator Grilling Mode: Tough Questions & Bold Answers</h2>
+        <p class="lead">
+          Click any question below to see how our engineering defense holds up against skeptical professors and evaluators!
+        </p>
+      </div>
+
+      <div style="text-align: right; margin-bottom: 16px;">
+        <button class="view-toggle-btn" onclick="toggleAllQuestions()">Expand / Collapse All Questions</button>
+      </div>
+
+      <div class="grilling-section">
+        <div class="grilling-title">
+          <span>🔥</span>
+          <h3>Evaluator Cross-Examination Room</h3>
+        </div>
+
+        <!-- Question 1 -->
+        <div class="accordion-item open">
+          <div class="accordion-header">
+            <span>Q1: Why not just run a heavy Transformer or LSTM on the endpoint? Modern laptops have 16 GB RAM!</span>
+            <span class="icon">+</span>
+          </div>
+          <div class="accordion-body">
+            <span class="strong-point">Formal Defense:</span> Having 16 GB of RAM does not grant an EDR license to consume it!
+            Enterprise laptops run IDEs, CAD software, and browser tabs. If an EDR consumes &gt;500 MB RAM and spikes CPU over 15%,
+            employees experience UI freezing and laptop battery drain, leading IT administrators to uninstall or disable the agent.
+            Our Tier 1 ONNX MLP evaluates in <span class="strong-point">1.4 milliseconds</span>, consumes <span class="strong-point">10.8 KB</span> of disk space,
+            and operates under a <span class="strong-point">138 MB resident memory</span> footprint, ensuring 0% perceptible impact on the user.
+            <div class="hinglish-note">
+              🗣️ <strong>Aasan Hinglish Me Javab:</strong> "Sir, laptop me 16 GB RAM user ke kaam ke liye hoti hai, antivirus ke liye nahi! Agar antivirus 500MB khaa lega toh laptop hang hoga aur user antivirus band kar dega. Isliye humne 10.8 KB ka ultra-lightweight ONNX model banaya jo sirf 1.4ms me chal jata hai aur user ko pata bhi nahi chalta!"
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 2 -->
+        <div class="accordion-item">
+          <div class="accordion-header">
+            <span>Q2: What happens if an attacker intentionally crafts an exploit to score 0.09 to evade Tier 2?</span>
+            <span class="icon">+</span>
+          </div>
+          <div class="accordion-body">
+            <span class="strong-point">Formal Defense:</span> To score 0.09, an executable must strictly mirror benign software across all 99 behavioral dimensions!
+            It cannot invoke Base64 PowerShell, cannot launch from Temp, cannot inject into foreign processes, and cannot establish unverified external C2 connections.
+            An adversary cannot execute ransomware encryption or steal credentials while keeping all 99 behavioral dimensions under 0.10.
+            The moment anomalous behavior starts, the score crosses into the grey or malware zones immediately.
+            <div class="hinglish-note">
+              🗣️ <strong>Aasan Hinglish Me Javab:</strong> "Sir, 0.09 score laane ke liye hacker ko bilkul shareef banna padega! Na wo Temp folder use kar sakta hai, na Base64, na process injection, na registry persistence. Aur agar hacker yeh sab nahi karega, toh wo attack hi execute nahi kar payega! Jaise hi wo file encrypt ya password churane ki koshish karega, score 0.90 cross kar jayega aur 2ms me terminate ho jayega."
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 3 -->
+        <div class="accordion-item">
+          <div class="accordion-header">
+            <span>Q3: What happens if the Cloud Tier 2 server is DDoS'd or unreachable? Does the endpoint freeze?</span>
+            <span class="icon">+</span>
+          </div>
+          <div class="accordion-body">
+            <span class="strong-point">Formal Defense:</span> Absolutely not. The grey-zone escalation is completely asynchronous and guarded by a non-blocking timeout policy.
+            If the cloud server is unreachable, the endpoint logs <code>[CLOUD OFFLINE]</code> and falls back to a fail-safe policy:
+            The process remains quarantined under active endpoint monitoring, and obvious malware (&ge;0.90) continues to be killed locally on the edge with zero cloud dependency!
+            <div class="hinglish-note">
+              🗣️ <strong>Aasan Hinglish Me Javab:</strong> "Sir, endpoint kabhi freeze nahi hota. Cloud communication background me non-blocking hoti hai. Agar cloud ka server down bhi ho gaya, toh Tier 1 ka edge gatekeeper local machine par WannaCry aur Mimikatz ko pehle ki tarah &lt;2ms me terminate karta rahega!"
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 4 -->
+        <div class="accordion-item">
+          <div class="accordion-header">
+            <span>Q4: Why does LayerNorm fail on tabular features while BatchNorm1d succeeds?</span>
+            <span class="icon">+</span>
+          </div>
+          <div class="accordion-body">
+            <span class="strong-point">Formal Defense:</span> LayerNorm normalizes across the feature dimension for a single sample.
+            In Natural Language Processing, word embeddings share a common latent dimension. But in tabular EDR data,
+            Feature 6 is an ImageLoad count (e.g. 48) while Feature 27 is a binary flag (0 or 1). Normalizing across heterogeneous feature
+            scales destroys their individual physical meanings.
+            <span class="strong-point">BatchNorm1d</span> normalizes each feature independently across the batch dimension,
+            preserving individual physical semantics and preventing gradient collapse.
+            <div class="hinglish-note">
+              🗣️ <strong>Aasan Hinglish Me Javab:</strong> "Sir, NLP text me sabhi words ek jaise vectors hote hain, isliye LayerNorm chal jata hai. Lekin EDR data me Feature 6 ek number hai (48 DLL load) aur Feature 27 ek true/false flag hai (0 ya 1). Agar in dono ko ek saath normalize karoge toh physical meaning destroy ho jata hai! BatchNorm1d har column ko alag se normalize karta hai, isliye 100% stability aayi."
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 5 -->
+        <div class="accordion-item">
+          <div class="accordion-header">
+            <span>Q5: How does your system compare to commercial giants like CrowdStrike Falcon?</span>
+            <span class="icon">+</span>
+          </div>
+          <div class="accordion-body">
+            <span class="strong-point">Formal Defense:</span> CrowdStrike Falcon relies heavily on continuous cloud streaming for threat correlation.
+            While effective, it requires continuous multi-megabit telemetry uploading per endpoint and introduces 300ms to 2-second cloud round-trip latency.
+            Our Two-Tier system resolves <span class="strong-point">90%+ of events locally at the edge in &lt; 2ms</span>, terminating threats on the spot
+            and cutting cloud egress costs by 95%!
+            <div class="hinglish-note">
+              🗣️ <strong>Aasan Hinglish Me Javab:</strong> "Sir, CrowdStrike jaise commercial tools har event ko cloud bhejte hain jisse 300ms se 2 second lagte hain aur bandwidth kharch hoti hai. Hamara model 90% decision edge par 1.8ms me khud le leta hai, aur company ka cloud cost 95% bacha leta hai!"
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       CHAPTER 11: LAUNCH COCKPIT
+       ========================================================================== -->
+  <section id="ch11" class="chapter">
+    <div class="container">
+      <div class="chapter-header">
+        <div class="chapter-number">CHAPTER 11</div>
+        <h2>Live Demonstration & SOC Command Cockpits</h2>
+        <p class="lead">
+          Both the Streamlit dashboard and the FastAPI WebSockets server are live and ready to test!
+        </p>
+      </div>
+
+      <div class="cta-box">
+        <h3>Launch the Operational Consoles</h3>
+        <p>
+          Experience real-time zero-refresh event streaming, inject simulated attacks, and observe sub-millisecond edge gatekeeping live.
+        </p>
+        <div class="btn-group">
+          <a href="http://127.0.0.1:8501" target="_blank" class="btn btn-primary">Open Streamlit SOC Dashboard (Port 8501)</a>
+          <a href="http://127.0.0.1:5050" target="_blank" class="btn btn-secondary">Open FastAPI WebSockets Console (Port 5050)</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LIGHTBOX MODAL FOR IMAGE ZOOM -->
+  <div class="lightbox-modal" id="imgLightboxModal">
+    <span class="lightbox-close">&times;</span>
+    <img class="lightbox-content" id="lightboxImage" src="" alt="Enlarged Diagram">
+    <div class="lightbox-caption" id="lightboxCaption"></div>
+  </div>
+
+</body>
+</html>

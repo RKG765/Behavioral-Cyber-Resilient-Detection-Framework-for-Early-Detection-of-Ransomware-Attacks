@@ -1,0 +1,121 @@
+# ==============================================================================
+# Enterprise Two-Tier EDR: Git Ignore Specification
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Python & Bytecode
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ------------------------------------------------------------------------------
+# Virtual Environments
+# ------------------------------------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ------------------------------------------------------------------------------
+# Testing & Type Checking
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.pyre/
+.pytype/
+
+# ------------------------------------------------------------------------------
+# IDEs & Text Editors
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# Operating System & Temporary Files
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.bak
+~$*
+
+# ------------------------------------------------------------------------------
+# Runtime Logs & Ephemeral Telemetry
+# ------------------------------------------------------------------------------
+*.log
+agent.log
+test_agent.log
+
+# ------------------------------------------------------------------------------
+# Raw Massive Datasets (>13 GB total volume)
+# Note: Raw LMD-2023 & SILRAD multi-GB CSV dumps are excluded to comply with
+# GitHub file size limits and repository hygiene. Curated behavioral feature
+# matrices (<1 MB) required for training and evaluation are whitelisted below.
+# ------------------------------------------------------------------------------
+dataset/full-csv(Evaluated Titles)/
+dataset/JamilIsp-SILRAD-dataset-d4a3625/
+dataset/LMD-2023 [1.75M Elements]/
+dataset/LMD-2023 [1.87M Elements]/
+dataset/LMD-2023 [2.3M Elements]/
+dataset/**/*.csv
+dataset/*.csv
+*.csv
+*.zip
+*.tar.gz
+*.7z
+*.rar
+
+# ------------------------------------------------------------------------------
+# Presentation Decks, Summaries & Document Generator Scripts
+# ------------------------------------------------------------------------------
+*.pptx
+*.docx
+edr_presentation.md
+build_full_edr_presentation.py
+build_master_edr_presentation_v2.py
+create_project_summary_docx.py
+generate_presentation.py
+
+# ------------------------------------------------------------------------------
+# Explicitly Track Curated Datasets & Processed Matrices
+# ------------------------------------------------------------------------------
+!dataset/behavioral_dataset.npz
+!dataset/behavioral_dataset_meta.json
+!dataset/clean_split.json
+!dataset/sequence_stats.json
+!dataset/balanced_training_sequences.json
+!dataset/balanced_training_sequences.xlsx
+
