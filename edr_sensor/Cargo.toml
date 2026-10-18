@@ -1,0 +1,26 @@
+[package]
+name = "edr_sensor"
+version = "0.1.0"
+edition = "2021"
+description = "Sysmon behavioral feature extractor for the Telltale agent (Python extension)"
+license = "MIT"
+
+[lib]
+name = "edr_sensor"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# maturin turns this on; plain `cargo test` links against libpython instead.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py38"] }
+regex = "1"
+roxmltree = "0.20"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_EventLog"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

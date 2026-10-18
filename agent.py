@@ -1,7 +1,7 @@
 """
 agent.py
 ========
-Tier 1 EDR -- Endpoint Security Agent
+Telltale -- Tier 1 Endpoint Security Agent
 Process Interception -> Suspension -> Inference -> Routing
 
 Monitors all new process creation via WMI, suspends unknown processes,
@@ -41,6 +41,12 @@ Production Corrections Applied:
   #24 Absolute paths for log/DB/model (CWD-hijack proof)
   #25 WMI watcher timeout so Ctrl+C / shutdown works
   #26 PID-reuse guard before kill; TOCTOU re-stat before caching
+  #27 Dormant processes (no behavior yet) watched up to MAX_WATCH, not dropped at 30s
+  #28 Processes that exit mid-window still get a verdict (post-mortem alert / Tier-2)
+  #29 Window finalized early once the 50-event training window is full
+  #30 Alert-only by default; killing requires --mode enforce / EDR_MODE=enforce
+  #31 Abusable signed tools (shells, script hosts, LOLBins) are always monitored
+  #32 Ghost processes (exited before triage) are judged from their Sysmon events
 """
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
@@ -52,6 +58,7 @@ import uuid
 import ctypes
 import ctypes.wintypes as wt
 import hashlib
+import json
 import sqlite3
 import logging
 import threading
@@ -65,6 +72,11 @@ import wmi
 import psutil
 import onnxruntime as ort
 
+try:
+    import edr_sensor                  # Rust Sysmon feature extractor (optional)
+except ImportError:
+    edr_sensor = None
+
 
 # ══════════════════════════════════════════════════════════════
 # PHASE 1: CONSTANTS, CONFIG & LOGGING
@@ -76,16 +88,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ── Model (Tier 1 — Endpoint) ──
 ONNX_MODEL_PATH = os.path.join(BASE_DIR, "tier1_behavioral.onnx")
 FEATURE_DIM     = 99               # behavioral feature vector length (must match training)
+FEATURE_META_PATH = os.path.join(BASE_DIR, "dataset", "behavioral_dataset_meta.json")
+MIN_SENSOR_EVENTS = 3              # training MIN_LEN: fewer events are never scored
 
 # ── Cloud API (Tier 2 — server.py) ──
-CLOUD_API_URL   = "http://127.0.0.1:8000/score"   # Tier-2 FastAPI server
+CLOUD_API_URL   = os.environ.get("EDR_CLOUD_URL", "http://127.0.0.1:8000/score")   # Tier-2 FastAPI server
 
 # ── Behavioral monitoring (#16, #21) ──
 MONITOR_WINDOW     = 30            # seconds each unknown process is observed
 MONITOR_INTERVAL   = 2             # seconds between scoring ticks
 MAX_MONITORED      = 256           # hard cap on concurrently watched processes
+MAX_WATCH          = 300           # dormant processes (no behavior yet) are watched up to 5 min (#27)
+EXIT_SETTLE        = 2             # seconds to let late Sysmon events land after exit (#28)
+MAX_GHOSTS         = 512           # cap on pending post-exit verdicts for ghost processes (#32)
 # (#23) While BehavioralExtractor returns random data, kills are only logged.
 ENFORCE_ON_SIMULATED = False
+
+# (#30) What a THREAT verdict does. 'alert' (default) only logs -- the models have
+# a measurable false-positive rate, so killing must be an explicit opt-in:
+#   set EDR_MODE=enforce   or   python agent.py --mode enforce
+AGENT_MODE = os.environ.get("EDR_MODE", "alert").strip().lower()
 
 # ── Trust cache (#18) ──
 TRUST_CACHE_CAPACITY = 1000
@@ -140,11 +162,20 @@ CRITICAL_PROCESSES = {
     "runtimebroker.exe", "shellexperiencehost.exe",
     "startmenuexperiencehost.exe", "searchhost.exe",
     "textinputhost.exe", "ctfmon.exe",
-    # Fix #14: Shells — suspending these causes fork-bomb deadlock
-    # because the agent spawns them for Authenticode fallback checks.
-    # Even with native WinVerifyTrust, these must be safelisted.
-    "powershell.exe", "pwsh.exe", "cmd.exe",
     "wmiprvse.exe",
+}
+
+# (#31) Signed Windows tools that attackers commonly abuse. A valid Microsoft
+# signature says WHO built the binary, not what it is being used for, so these
+# are behavior-monitored even when signed / in System32. (Shells were safelisted
+# while the agent suspended processes (#14); nothing is suspended since #16.)
+# Matched on the real exe basename -- this list only ADDS scrutiny, never trust.
+ALWAYS_WATCH = {
+    "cmd.exe", "powershell.exe", "pwsh.exe", "powershell_ise.exe",
+    "wscript.exe", "cscript.exe", "mshta.exe",
+    "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe",
+    "installutil.exe", "regasm.exe", "regsvcs.exe", "wmic.exe", "msiexec.exe",
+    "cmstp.exe", "mavinject.exe", "forfiles.exe", "esentutl.exe",
 }
 
 # ── Fix #8/#20: Trusted Authenticode Publishers ──────────────
@@ -640,6 +671,73 @@ class BehavioralExtractor:
         # PROTOTYPE: uniform random features in [0, 1]
         return np.random.rand(1, self.feature_dim).astype(np.float32)
 
+    def forget(self, pid: int):
+        pass
+
+    def stop(self):
+        pass
+
+
+class SysmonExtractor:
+    """
+    Real behavioral features from live Sysmon telemetry, via the Rust
+    `edr_sensor` extension (build: see edr_sensor/README.md).
+
+    The Rust side subscribes to the Sysmon event log, buffers each process's
+    earliest 50 events, and computes the same 99 features as
+    build_behavioral_dataset.py (verified by edr_sensor/parity_check.py).
+    get_sequence() returns None until a process has MIN_SENSOR_EVENTS events,
+    so it is never scored on "no data" (#22).
+    """
+
+    is_simulated = False
+
+    def __init__(self, feature_dim: int = FEATURE_DIM):
+        if edr_sensor is None:
+            raise RuntimeError("edr_sensor extension is not installed")
+        if edr_sensor.FEATURE_DIM != feature_dim:
+            raise RuntimeError(
+                f"edr_sensor produces {edr_sensor.FEATURE_DIM} features, model expects {feature_dim}"
+            )
+        if os.path.exists(FEATURE_META_PATH):
+            with open(FEATURE_META_PATH, encoding="utf-8") as f:
+                trained = json.load(f)["features"]
+            if edr_sensor.feature_names() != trained:
+                raise RuntimeError("edr_sensor feature order differs from the training schema")
+        self.sensor = edr_sensor.Sensor()
+        self.sensor.start()          # OSError 15007 if Sysmon is not installed
+        logger.info(f"SysmonExtractor initialized (LIVE -- channel {edr_sensor.DEFAULT_CHANNEL})")
+
+    def get_sequence(self, pid: int):
+        vec = self.sensor.features(pid, MIN_SENSOR_EVENTS)
+        if vec is None:
+            return None
+        return np.asarray(vec, dtype=np.float32).reshape(1, -1)
+
+    def forget(self, pid: int):
+        self.sensor.forget(pid)
+
+    def creation_image(self, pid: int):
+        """Image path from the process's Sysmon EventID 1, even after it exited (#32)."""
+        get = getattr(self.sensor, "creation_image", None)
+        return get(pid) if get else None
+
+    def is_complete(self, pid: int) -> bool:
+        """The training window (first 50 events) is full -- the vector is final (#29)."""
+        return self.sensor.event_count(pid) >= edr_sensor.WINDOW
+
+    def stop(self):
+        self.sensor.stop()
+
+
+def make_extractor():
+    """Live Sysmon features when available, otherwise the simulated dry-run (#23)."""
+    try:
+        return SysmonExtractor()
+    except (RuntimeError, OSError) as e:
+        logger.warning(f"Live Sysmon features unavailable ({e}) -- falling back to SIMULATED")
+        return BehavioralExtractor()
+
 
 # ══════════════════════════════════════════════════════════════
 # PHASE 4 (cont): ONNX INFERENCE ENGINE
@@ -660,7 +758,7 @@ class InferenceEngine:
         if not os.path.exists(model_path):
             raise FileNotFoundError(
                 f"ONNX model not found: {model_path}\n"
-                f"Run train_tier1.py first to generate the model."
+                f"Run train_tier1_behavioral.py first to generate the model."
             )
 
         # CPU-only for endpoint deployment (no GPU dependency)
@@ -714,7 +812,9 @@ behavior_monitor = None
 
 
 def actions_enforced() -> bool:
-    """(#23) Kill actions are real only when sequence data is real."""
+    """Kills happen only in enforce mode (#30) and only on real sequence data (#23)."""
+    if AGENT_MODE != "enforce":
+        return False
     if ENFORCE_ON_SIMULATED:
         return True
     return not getattr(sequence_extractor, "is_simulated", True)
@@ -726,6 +826,46 @@ def _cache_trusted(path: str, fp_before):
         VERIFIED_PATH_CACHE.add(fp_before)
 
 
+def _triage(pid: int, process_name: str, exe_path: str):
+    """
+    Trust decision for one executable path (steps 3-6 below).
+    Returns (verdict, signer): verdict is one of
+      "critical"    critical OS process in its protected path -> skip
+      "cached"      fingerprint already verified              -> skip
+      "trusted"     trusted publisher signature               -> skip
+      "whitelisted" custom SHA-256 whitelist                  -> skip
+      "watch"       abusable signed tool (#31)                -> monitor
+      "unknown"     anything else                             -> monitor
+    """
+    name_lower = (process_name or "").lower()
+    if name_lower in CRITICAL_PROCESSES:
+        if is_protected_system_path(exe_path):
+            return "critical", ""
+        logger.warning(
+            f"MASQUERADE? PID:{pid} claims '{process_name}' but runs from "
+            f"{exe_path} -- NOT safelisted, will be analyzed"
+        )
+    if os.path.basename(exe_path).lower() in ALWAYS_WATCH:
+        return "watch", ""
+    fp = file_fingerprint(exe_path)
+    if fp is not None and fp in VERIFIED_PATH_CACHE:
+        return "cached", ""
+    is_trusted, signer = verify_signature(exe_path)
+    if is_trusted:
+        _cache_trusted(exe_path, fp)
+        return "trusted", signer
+    if whitelist_db and whitelist_db.is_whitelisted(exe_path):
+        _cache_trusted(exe_path, fp)
+        return "whitelisted", ""
+    return "unknown", signer
+
+
+def _can_judge_ghosts() -> bool:
+    """Ghost verdicts need real Sysmon data that outlives the process (#32)."""
+    return (hasattr(sequence_extractor, "creation_image")
+            and not getattr(sequence_extractor, "is_simulated", True))
+
+
 def handle_new_process(pid: int, process_name: str):
     """
     Fast triage for a newly spawned process (ThreadPoolExecutor worker).
@@ -733,7 +873,9 @@ def handle_new_process(pid: int, process_name: str):
     Decision chain:
       1. Self-PID check                       (#1)
       2. Resolve exe path (no suspend)        (#4, #16)
+         -> already exited: post-exit verdict from Sysmon data (#32)
       3. Critical name + protected PATH       (#2, #19)
+      3b. Abusable signed tool -> monitor     (#31)
       4. Fingerprint cache (path,mtime,size)  (#17, #18)
       5. Authenticode + publisher             (#8, #20)
       6. Custom whitelist                     (#8)
@@ -750,7 +892,12 @@ def handle_new_process(pid: int, process_name: str):
         proc = psutil.Process(pid)
         exe_path = proc.exe()
     except psutil.NoSuchProcess:
-        logger.debug(f"Ghost process PID:{pid} {process_name} -- already exited")
+        if behavior_monitor is not None and _can_judge_ghosts():
+            behavior_monitor.register_ghost(pid, process_name)
+            logger.debug(f"Ghost process PID:{pid} {process_name} -- exited before triage, "
+                         f"judging it from its Sysmon events")
+        else:
+            logger.debug(f"Ghost process PID:{pid} {process_name} -- already exited")
         return
     except (psutil.AccessDenied, psutil.ZombieProcess):
         if name_lower in CRITICAL_PROCESSES:
@@ -766,43 +913,26 @@ def handle_new_process(pid: int, process_name: str):
         logger.warning(f"Empty exe path PID:{pid} {process_name} -- not monitorable")
         return
 
-    # ── #2/#19: safelist by PATH, never by name alone ───────
-    protected = is_protected_system_path(exe_path)
-    if name_lower in CRITICAL_PROCESSES:
-        if protected:
-            logger.debug(f"SKIP (critical, protected path) PID:{pid} {process_name}")
-            return
-        logger.warning(
-            f"MASQUERADE? PID:{pid} claims '{process_name}' but runs from "
-            f"{exe_path} -- NOT safelisted, will be analyzed"
-        )
-
-    # ── #17: cache keyed by (path, mtime_ns, size) ──────────
-    fp = file_fingerprint(exe_path)
-    if fp is not None and fp in VERIFIED_PATH_CACHE:
+    verdict, signer = _triage(pid, process_name, exe_path)
+    if verdict == "critical":
+        logger.debug(f"SKIP (critical, protected path) PID:{pid} {process_name}")
+    elif verdict == "cached":
         logger.debug(f"ALLOWED (cached) PID:{pid} {process_name}")
-        return
-
-    # ── #8/#20: signature + publisher ───────────────────────
-    is_trusted, signer = verify_signature(exe_path)
-    if is_trusted:
-        _cache_trusted(exe_path, fp)
-        logger.info(f"[TRUSTED]  {process_name} allowed PID:{pid} ({signer[:60]})") 
-        return
-
-    # ── #8 Layer 1B: custom whitelist ───────────────────────
-    if whitelist_db and whitelist_db.is_whitelisted(exe_path):
-        _cache_trusted(exe_path, fp)
+    elif verdict == "trusted":
+        logger.info(f"[TRUSTED]  {process_name} allowed PID:{pid} ({signer[:60]})")
+    elif verdict == "whitelisted":
         logger.info(f"ALLOWED (custom whitelist) PID:{pid} {process_name}")
-        return
-
-    # ── Unknown -> behavioral observation (process keeps running) ──
-    logger.info(
-        f"UNKNOWN PID:{pid} {process_name} ({signer}) -- "
-        f"monitoring behavior for {MONITOR_WINDOW}s  path={exe_path}"
-    )
-    if behavior_monitor is not None:
-        behavior_monitor.register(pid, process_name, exe_path)
+    else:
+        if verdict == "watch":
+            logger.info(f"[WATCH]    {process_name} PID:{pid} -- signed system tool, "
+                        f"monitoring behavior  path={exe_path}")
+        else:
+            logger.info(
+                f"UNKNOWN PID:{pid} {process_name} ({signer}) -- "
+                f"monitoring behavior for {MONITOR_WINDOW}s  path={exe_path}"
+            )
+        if behavior_monitor is not None:
+            behavior_monitor.register(pid, process_name, exe_path)
 
 
 def _safe_kill(proc, pid: int, name: str):
@@ -825,7 +955,9 @@ def _safe_kill(proc, pid: int, name: str):
 def _enforce_kill(proc, pid, name, path, reason):
     """Kill, or just log in dry-run mode (#23)."""
     if not actions_enforced():
-        logger.warning(f"[DRY-RUN] would KILL PID:{pid} {name} -- {reason}  path={path}")
+        tag = "ALERT" if AGENT_MODE != "enforce" else "DRY-RUN"
+        logger.critical(f"[{tag}] THREAT PID:{pid} {name} -- {reason}  path={path}  "
+                        f"(not killed: mode={AGENT_MODE})")
         return False
     ok = _safe_kill(proc, pid, name)
     if ok:
@@ -846,7 +978,11 @@ class BehaviorMonitor:
       no events yet             -> keep waiting (never scored as benign, #22)
       window over, max <= SAFE  -> benign, forget
       window over, in between   -> grey zone queue (Tier-2)
-      window over, no data      -> logged, forgotten (fail-open)
+      window full (50 events)   -> final early: the vector can no longer change (#29)
+      no data at window end     -> watch extended up to MAX_WATCH for dormant
+                                   processes, then logged (fail-open) (#27)
+      process exited            -> final verdict from its buffered behavior after
+                                   EXIT_SETTLE: post-mortem alert / Tier-2 (#28)
     """
 
     def __init__(self):
@@ -866,6 +1002,29 @@ class BehaviorMonitor:
             self._watch[pid] = {
                 "pid": pid, "name": name, "path": path, "created": created,
                 "started": time.time(), "max_score": 0.0, "scored": 0,
+                "last_seq": None, "exited_at": None, "pid_reused": False,
+                "extended": False,
+            }
+        return True
+
+    def register_ghost(self, pid, name):
+        """
+        (#32) A process that exited before triage could read its path. Its
+        Sysmon events are still buffered, so queue it for a post-exit verdict:
+        after EXIT_SETTLE the recorded image path is triaged like any other.
+        """
+        now = time.time()
+        with self._lock:
+            if pid in self._watch:
+                return False
+            if sum(1 for x in self._watch.values() if x.get("ghost")) >= MAX_GHOSTS:
+                logger.warning(f"Ghost queue full ({MAX_GHOSTS}) -- PID:{pid} {name} not judged")
+                return False
+            self._watch[pid] = {
+                "pid": pid, "name": name, "path": None, "created": None,
+                "started": now, "max_score": 0.0, "scored": 0,
+                "last_seq": None, "exited_at": now, "pid_reused": False,
+                "extended": False, "ghost": True,
             }
         return True
 
@@ -884,6 +1043,41 @@ class BehaviorMonitor:
     def _drop(self, pid):
         with self._lock:
             self._watch.pop(pid, None)
+        forget = getattr(sequence_extractor, "forget", None)
+        if forget:
+            forget(pid)
+
+    @staticmethod
+    def _live_process(e):
+        """(proc, None) while the watched process runs, else (None, pid_was_reused)."""
+        try:
+            proc = psutil.Process(e["pid"])
+            if abs(proc.create_time() - e["created"]) > 1e-3:
+                return None, True
+            if not proc.is_running():
+                return None, False
+            return proc, None
+        except psutil.Error:
+            return None, False
+
+    def _score(self, e, seq):
+        """Score one vector; returns the score, or None when there is no data (#22)."""
+        if seq is None or not np.any(seq):
+            return None
+        score = inference_engine.predict(seq)
+        e["scored"] += 1
+        e["max_score"] = max(e["max_score"], score)
+        e["last_seq"] = seq
+        logger.info(
+            f"[SCORE]  {e['name']} PID:{e['pid']}  Tier-1 score={score:.4f}  "
+            f"({'THREAT' if score >= THREAT_THRESHOLD else 'grey' if score > SAFE_THRESHOLD else 'benign'})"
+        )
+        return score
+
+    @staticmethod
+    def _window_complete(pid):
+        done = getattr(sequence_extractor, "is_complete", None)
+        return bool(done and done(pid))
 
     def tick(self):
         now = time.time()
@@ -891,40 +1085,49 @@ class BehaviorMonitor:
             entries = list(self._watch.values())
         for e in entries:
             pid, name = e["pid"], e["name"]
-            try:
-                proc = psutil.Process(pid)
-                if not proc.is_running() or abs(proc.create_time() - e["created"]) > 1e-3:
+
+            if e["exited_at"] is not None:                      # #28
+                if now - e["exited_at"] >= EXIT_SETTLE:
+                    if e.get("ghost"):
+                        self._finalize_ghost(e)                  # #32
+                    else:
+                        self._finalize_exited(e)
                     self._drop(pid)
-                    logger.debug(f"Monitor: PID:{pid} {name} exited")
-                    continue
-            except psutil.Error:
+                continue
+
+            proc, reused = self._live_process(e)
+            if proc is None:
+                e["exited_at"], e["pid_reused"] = now, reused
+                logger.debug(f"Monitor: PID:{pid} {name} exited -- final verdict in {EXIT_SETTLE}s")
+                continue
+
+            score = self._score(e, sequence_extractor.get_sequence(pid))
+            if score is not None and score >= THREAT_THRESHOLD:
+                _enforce_kill(proc, pid, name, e["path"],
+                              f"score={score:.4f} >= {THREAT_THRESHOLD}")
                 self._drop(pid)
                 continue
 
-            seq = sequence_extractor.get_sequence(pid)
-            if seq is not None and np.any(seq):                 # #22
-                score = inference_engine.predict(seq)
-                e["scored"] += 1
-                e["max_score"] = max(e["max_score"], score)
-                logger.info(
-                    f"[SCORE]  {name} PID:{pid}  Tier-1 score={score:.4f}  "
-                    f"({'THREAT' if score >= THREAT_THRESHOLD else 'grey' if score > SAFE_THRESHOLD else 'benign'})"
-                )
-                if score >= THREAT_THRESHOLD:
-                    _enforce_kill(proc, pid, name, e["path"],
-                                  f"score={score:.4f} >= {THREAT_THRESHOLD}")
+            age = now - e["started"]
+            if e["scored"]:
+                if age >= MONITOR_WINDOW or self._window_complete(pid):   # #29
+                    self._finalize(e)
                     self._drop(pid)
-                    continue
-
-            if now - e["started"] >= MONITOR_WINDOW:
+            elif age >= MAX_WATCH:
                 self._finalize(e)
                 self._drop(pid)
+            elif age >= MONITOR_WINDOW and not e["extended"]:          # #27
+                e["extended"] = True
+                logger.info(
+                    f"[DORMANT]    {name} PID:{pid} no behavior in {MONITOR_WINDOW}s "
+                    f"-- watching up to {MAX_WATCH}s"
+                )
 
     def _finalize(self, e):
         pid, name, ms = e["pid"], e["name"], e["max_score"]
         if e["scored"] == 0:
             logger.warning(
-                f"NO BEHAVIOR DATA PID:{pid} {name} in {MONITOR_WINDOW}s "
+                f"NO BEHAVIOR DATA PID:{pid} {name} in {MAX_WATCH}s "
                 f"-- left running (unverified)"
             )
         elif ms <= SAFE_THRESHOLD:
@@ -932,6 +1135,56 @@ class BehaviorMonitor:
         else:
             logger.warning(
                 f"[GREY ZONE]  {name} escalated to Cloud (Score: {ms:.2f}) PID:{pid}"
+            )
+            self._escalate_to_cloud(e)
+
+    def _finalize_ghost(self, e):
+        """(#32) Triage a process that exited before triage, from its Sysmon record."""
+        pid, name = e["pid"], e["name"]
+        path = sequence_extractor.creation_image(pid)
+        if not path:
+            logger.debug(f"[GHOST]      {name} PID:{pid} -- no Sysmon creation event, not judged")
+            return
+        # WMI process names can be truncated (15 chars) -- prefix match. A mismatch
+        # means the PID now belongs to another process: judge nothing.
+        base = os.path.basename(path).lower()
+        if not name or not base.startswith(name.lower()):
+            logger.debug(f"[GHOST]      PID:{pid} '{name}' no longer matches {path} -- not judged")
+            return
+        verdict, _ = _triage(pid, name, path)
+        if verdict not in ("watch", "unknown"):
+            logger.debug(f"[GHOST]      {name} PID:{pid} exited before triage -- {verdict}")
+            return
+        e["path"] = path
+        logger.debug(f"[GHOST]      {name} PID:{pid} exited before triage -- judging recorded "
+                     f"behavior  path={path}")
+        self._finalize_exited(e, quiet=True)
+
+    def _finalize_exited(self, e, quiet=False):
+        """
+        (#28) A process that exits mid-window still gets a verdict. Its buffered
+        behavior is scored once more (late Sysmon events included); if the PID was
+        already reused, the last vector scored while it ran is used instead.
+        quiet: benign / no-data outcomes are logged at DEBUG (ghost processes, #32).
+        """
+        pid, name = e["pid"], e["name"]
+        info = logger.debug if quiet else logger.info
+        seq = None if e["pid_reused"] else sequence_extractor.get_sequence(pid)
+        if self._score(e, seq) is None and e["last_seq"] is not None:
+            self._score(e, e["last_seq"])
+        ms = e["max_score"]
+        if e["scored"] == 0:
+            info(f"[EXITED]     {name} PID:{pid} exited before producing behavior data")
+        elif ms >= THREAT_THRESHOLD:
+            logger.critical(
+                f"[POST-MORTEM THREAT]  {name} PID:{pid} exited before it could be killed "
+                f"-- Tier-1 score={ms:.4f}  path={e['path']}  (investigate its children / files)"
+            )
+        elif ms <= SAFE_THRESHOLD:
+            info(f"[BENIGN]     {name} exited, allowed (Score: {ms:.2f}) PID:{pid}")
+        else:
+            logger.warning(
+                f"[GREY ZONE]  {name} exited, escalated to Cloud for a verdict (Score: {ms:.2f}) PID:{pid}"
             )
             self._escalate_to_cloud(e)
 
@@ -945,7 +1198,14 @@ class BehaviorMonitor:
         t1_score = e["max_score"]
 
         # Get a fresh feature vector for cloud analysis
-        features = sequence_extractor.get_sequence(pid).flatten().tolist()
+        # An exited process's PID may be reused -- send the vector it was scored on.
+        seq = e.get("last_seq") if e.get("exited_at") else sequence_extractor.get_sequence(pid)
+        if seq is None:
+            seq = e.get("last_seq")
+        if seq is None:
+            logger.warning(f"[GREY ZONE]  {name} PID:{pid} -- no features left to escalate")
+            return
+        features = seq.flatten().tolist()
         payload  = {
             "process_name": name,
             "tier1_score": float(t1_score),
@@ -961,9 +1221,16 @@ class BehaviorMonitor:
 
             if verdict == "KILL":
                 logger.critical(
-                    f"[CLOUD VERDICT]  {name} KILLED by Tier-2 "
-                    f"(Score: {confidence:.2f})  PID:{pid}"
+                    f"[CLOUD VERDICT]  {name} THREAT per Tier-2 "
+                    f"(Score: {confidence:.2f})  PID:{pid}  path={path}"
                 )
+                if e.get("exited_at"):
+                    # The PID may already belong to another process -- alert only.
+                    logger.critical(
+                        f"[POST-MORTEM THREAT]  {name} PID:{pid} had exited -- Tier-2 "
+                        f"conf={confidence:.4f}  path={path}  (investigate its children / files)"
+                    )
+                    return
                 try:
                     proc = psutil.Process(pid)
                     if (proc.is_running() and
@@ -987,6 +1254,10 @@ class BehaviorMonitor:
                 )
 
         except requests.exceptions.ConnectionError:
+            if e.get("exited_at"):
+                logger.error(f"[CLOUD OFFLINE]  {name} PID:{pid} (exited) -- no Tier-2 verdict, "
+                             f"Tier-1 score={t1_score:.4f}  path={path}")
+                return
             logger.error(
                 f"[CLOUD OFFLINE]  {name} -- server unreachable, "
                 f"falling back to timeout policy (policy={NETWORK_FAIL_POLICY})"
@@ -999,6 +1270,8 @@ class BehaviorMonitor:
                 })
         except Exception as ex:
             logger.error(f"[CLOUD ERROR]  {name}: {ex}")
+            if e.get("exited_at"):
+                return
             with grey_zone_lock:
                 grey_zone_queue.append({
                     "pid": pid, "name": name, "path": path,
@@ -1150,15 +1423,14 @@ class ResourceWatchdog:
 # ══════════════════════════════════════════════════════════════
 
 BANNER = r"""
-  _____ ___ _____ ___    _     _____ ___  ___
- |_   _|_ _| ____|  _ \ / |   | ____|  _ \|  _ \
-   | |  | ||  _| | |_) || |   |  _| | | | | |_) |
-   | |  | || |___|  _ < | |   | |___| |_| |  _ <
-   |_| |___|_____|_| \_\|_|   |_____|____/|_| \_\
+  _____ _____ _     _   _____  _    _     _____
+ |_   _| ____| |   | | |_   _|/ \  | |   | ____|
+   | | |  _| | |   | |   | | / _ \ | |   |  _|
+   | | | |___| |___| |___| |/ ___ \| |___| |___
+   |_| |_____|_____|_____|_/_/   \_\_____|_____|
 
-   Endpoint Security Agent v3.0 (behavioral)
-   26 Production Corrections Applied
-   NETWORK_FAIL_POLICY: {policy}
+   Telltale -- behavioral ransomware detection for Windows
+   Endpoint agent v3.0  |  NETWORK_FAIL_POLICY: {policy}
 """
 
 
@@ -1181,9 +1453,19 @@ def main():
       6. Start thread pool
       7. Start WMI listener (blocks main thread)
     """
-    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor
+    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor, AGENT_MODE
+
+    if "--mode" in sys.argv:
+        i = sys.argv.index("--mode")
+        AGENT_MODE = sys.argv[i + 1].strip().lower() if i + 1 < len(sys.argv) else AGENT_MODE
+    if AGENT_MODE not in ("alert", "enforce"):
+        logger.warning(f"Unknown mode '{AGENT_MODE}' -- using 'alert'")
+        AGENT_MODE = "alert"
 
     print(BANNER.format(policy=NETWORK_FAIL_POLICY))
+    logger.info(f"Mode: {AGENT_MODE.upper()}"
+                + ("  -- threats are KILLED" if AGENT_MODE == "enforce"
+                   else "  -- threats are logged only (use --mode enforce to kill)"))
 
     # ── #3: Admin privilege check ───────────────────────────
     if not is_admin():
@@ -1214,7 +1496,7 @@ def main():
         sys.exit(1)
 
     # ── Initialize BehavioralExtractor (#12) ────────────────
-    sequence_extractor = BehavioralExtractor()
+    sequence_extractor = make_extractor()
 
     # ── Initialize SQLite whitelist (#8 Layer 1B) ───────────
     whitelist_db = CustomWhitelist()
@@ -1287,6 +1569,8 @@ def main():
         gz_monitor.stop()
         behavior_monitor.stop()
         watchdog.stop()
+        if hasattr(sequence_extractor, "stop"):
+            sequence_extractor.stop()
         if whitelist_db:
             whitelist_db.close()
         logger.info("Agent stopped.")

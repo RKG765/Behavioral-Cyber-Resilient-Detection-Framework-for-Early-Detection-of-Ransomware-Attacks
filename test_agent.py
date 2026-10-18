@@ -45,8 +45,10 @@ class FakeEngine:
 
 
 class FakeExtractor:
-    def __init__(self, empty=False, simulated=False):
-        self.empty, self.is_simulated = empty, simulated
+    def __init__(self, empty=False, simulated=False, image=None):
+        self.empty, self.is_simulated, self.image = empty, simulated, image
+    def creation_image(self, pid):
+        return self.image
     def get_sequence(self, pid):
         if self.empty:
             return np.zeros((1, 50), dtype=np.int64)
@@ -67,7 +69,8 @@ def test(fn):
     return fn
 
 
-def reset_agent_state(extractor=None, engine=None, score=0.0, window=30):
+def reset_agent_state(extractor=None, engine=None, score=0.0, window=30, max_watch=None,
+                      mode="enforce"):
     agent.VERIFIED_PATH_CACHE.clear()
     agent.grey_zone_queue.clear()
     agent.sequence_extractor = extractor or FakeExtractor()
@@ -76,7 +79,26 @@ def reset_agent_state(extractor=None, engine=None, score=0.0, window=30):
     agent.SELF_PIDS.clear()
     agent.behavior_monitor = agent.BehaviorMonitor()
     agent.MONITOR_WINDOW = window
+    agent.MAX_WATCH = window if max_watch is None else max_watch
+    agent.EXIT_SETTLE = 0.2
     agent.MAX_MONITORED = 256
+    agent.AGENT_MODE = mode
+    agent.CLOUD_API_URL = "http://127.0.0.1:9/score"     # never reach a live Tier-2 from tests
+
+
+class LogCapture(logging.Handler):
+    """Collects agent log messages so tests can assert on verdicts."""
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.msgs = []
+    def emit(self, record):
+        self.msgs.append(record.getMessage())
+    def __enter__(self):
+        agent.logger.addHandler(self); return self
+    def __exit__(self, *a):
+        agent.logger.removeHandler(self)
+    def has(self, text):
+        return any(text in m for m in self.msgs)
 
 
 # ───────────────────────── tests ─────────────────────────
@@ -180,14 +202,14 @@ def t05_masquerade_not_safelisted_by_name():
 
 
 @test
-def t06_real_system_binary_skipped_by_path():
-    """cmd.exe from real System32 is skipped (path + name)"""
+def t06_signed_shell_is_monitored():
+    """(#31) Microsoft-signed cmd.exe in System32 is behavior-monitored, not trusted"""
     reset_agent_state()
     p = subprocess.Popen([os.path.join(os.environ["SystemRoot"], "System32", "cmd.exe"),
                           "/c", "ping -n 20 127.0.0.1 >nul"])
     SPAWNED.append(p); time.sleep(0.3)
     agent.handle_new_process(p.pid, "cmd.exe")
-    assert p.pid not in agent.behavior_monitor.watched()
+    assert p.pid in agent.behavior_monitor.watched()
     assert psutil.Process(p.pid).status() != psutil.STATUS_STOPPED
     p.kill()
 
@@ -344,7 +366,7 @@ def t16_custom_whitelist_db():
 def t17_real_onnx_model_probability():
     """ONNX model returns probability in [0,1] on random sequences"""
     eng = agent.InferenceEngine(agent.ONNX_MODEL_PATH)
-    ex = agent.SequenceExtractor()
+    ex = agent.BehavioralExtractor()
     scores = [eng.predict(ex.get_sequence(1)) for _ in range(50)]
     log(f"50 scores: min={min(scores):.4f} max={max(scores):.4f}")
     assert all(0.0 <= s <= 1.0 for s in scores)
@@ -360,6 +382,189 @@ def t18_lru_thread_safety_and_memory_bound():
     ts = [threading.Thread(target=work, args=(b,)) for b in range(8)]
     [t.start() for t in ts]; [t.join() for t in ts]
     assert len(c) == 1000
+
+
+@test
+def t19_rust_sensor_end_to_end():
+    """Sysmon XML -> Rust edr_sensor features -> ONNX score (skipped if not built)"""
+    if agent.edr_sensor is None:
+        log("edr_sensor not installed -- skipped"); return
+    s = agent.edr_sensor.Sensor()
+    def xml(eid, ms, extra=""):
+        return (f"<Event><System><EventID>{eid}</EventID>"
+                f"<TimeCreated SystemTime='2026-10-18T10:00:00.{ms:03d}0000Z'/></System><EventData>"
+                f"<Data Name='ProcessGuid'>{{T19}}</Data><Data Name='ProcessId'>4242</Data>{extra}"
+                f"</EventData></Event>")
+    assert s.ingest_xml(xml(1, 0, "<Data Name='Image'>C:\\Users\\x\\AppData\\Local\\Temp\\a.exe</Data>"))
+    assert s.ingest_xml(xml(11, 10, "<Data Name='TargetFilename'>C:\\Temp\\b.exe</Data>"))
+    assert s.features(4242) is None                     # < 3 events: never scored (#22)
+    assert s.ingest_xml(xml(3, 20, "<Data Name='DestinationIp'>8.8.8.8</Data>"))
+    v = np.asarray(s.features(4242), dtype=np.float32).reshape(1, -1)
+    assert v.shape == (1, agent.FEATURE_DIM)
+    names = agent.edr_sensor.feature_names()
+    assert v[0, names.index("is_executing_from_temp")] == 1.0
+    assert v[0, names.index("net_frac_external")] == 1.0
+    p = agent.InferenceEngine(agent.ONNX_MODEL_PATH).predict(v)
+    log(f"live-path score={p:.4f}")
+    assert 0.0 <= p <= 1.0
+    s.forget(4242)
+    assert s.event_count(4242) == 0
+
+
+def _exit_and_settle(p):
+    """Kill the spawned process, then tick through exit detection + settle."""
+    p.kill(); p.wait()
+    agent.behavior_monitor.tick()                 # notices the exit
+    time.sleep(0.3)
+    agent.behavior_monitor.tick()                 # final verdict after EXIT_SETTLE
+
+
+@test
+def t20_exited_threat_gets_post_mortem_alert():
+    """(#28) process exits mid-window with threat behavior -> CRITICAL post-mortem alert"""
+    reset_agent_state(extractor=FakeExtractor(empty=True), score=0.97)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "quick.exe", "C:\\quick.exe")
+    agent.behavior_monitor.tick()                 # no data yet -> nothing scored
+    agent.sequence_extractor = FakeExtractor()    # late Sysmon events arrive
+    with LogCapture() as cap:
+        _exit_and_settle(p)
+    assert cap.has("[POST-MORTEM THREAT]") and "quick.exe" in " ".join(cap.msgs)
+    assert p.pid not in agent.behavior_monitor.watched()
+
+
+@test
+def t21_exited_grey_is_escalated_not_dropped():
+    """(#28) short-lived grey-zone process still reaches Tier-2; offline -> logged, never queued for a kill"""
+    reset_agent_state(score=0.5)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "brief.exe", "C:\\brief.exe")
+    agent.behavior_monitor.tick()
+    assert not agent.grey_zone_queue              # still inside its 30s window
+    with LogCapture() as cap:
+        _exit_and_settle(p)
+    assert cap.has("exited, escalated to Cloud")
+    assert cap.has("(exited) -- no Tier-2 verdict")
+    assert not agent.grey_zone_queue              # its PID may be reused: no timeout kill
+    assert p.pid not in agent.behavior_monitor.watched()
+
+
+@test
+def t22_dormant_process_watch_extended():
+    """(#27) no behavior by window end -> keep watching; scored once it acts"""
+    ex = FakeExtractor(empty=True)
+    reset_agent_state(extractor=ex, score=0.02, window=0.2, max_watch=30)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "sleepy.exe", "C:\\sleepy.exe")
+    time.sleep(0.3)
+    with LogCapture() as cap:
+        agent.behavior_monitor.tick()
+    assert cap.has("[DORMANT]") and p.pid in agent.behavior_monitor.watched()
+    ex.empty = False                              # wakes up and does something
+    with LogCapture() as cap:
+        agent.behavior_monitor.tick()
+    assert cap.has("[BENIGN]") and p.pid not in agent.behavior_monitor.watched()
+    p.kill()
+
+
+@test
+def t23_full_window_finalized_early():
+    """(#29) once the 50-event window is full the verdict is final before 30s"""
+    class FullExtractor(FakeExtractor):
+        def is_complete(self, pid): return True
+    reset_agent_state(extractor=FullExtractor(), score=0.5, window=30)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "busy.exe", "C:\\busy.exe")
+    agent.behavior_monitor.tick()
+    assert p.pid not in agent.behavior_monitor.watched()
+    assert len(agent.grey_zone_queue) == 1 and p.poll() is None
+    p.kill()
+
+
+@test
+def t24_alert_mode_never_kills():
+    """(#30) default alert mode: threat is logged CRITICAL, process survives"""
+    reset_agent_state(score=0.99, mode="alert")
+    assert not agent.actions_enforced()
+    p = spawn(); agent.behavior_monitor.register(p.pid, "x.exe", "C:\\x.exe")
+    with LogCapture() as cap:
+        agent.behavior_monitor.tick()
+    time.sleep(0.3)
+    assert p.poll() is None and cap.has("[ALERT] THREAT")
+    p.kill()
+
+
+@test
+def t25_default_mode_is_alert():
+    """(#30) a fresh agent with no EDR_MODE set does not enforce"""
+    env = {k: v for k, v in os.environ.items() if k != "EDR_MODE"}
+    out = subprocess.run([sys.executable, "-c", "import agent; print(agent.AGENT_MODE)"],
+                         cwd=HERE, env=env, capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip().splitlines()[-1] == "alert", out.stdout + out.stderr
+
+
+def _dead_pid():
+    """PID of a process that has already exited (a 'ghost' by the time triage runs)."""
+    p = subprocess.Popen([os.path.join(os.environ["SystemRoot"], "System32", "PING.EXE"), "-n", "1", "127.0.0.1"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p.wait()
+    return p.pid
+
+
+def _settle_ghosts():
+    time.sleep(0.3)
+    agent.behavior_monitor.tick()
+
+
+@test
+def t26_ghost_threat_gets_post_mortem_alert():
+    """(#32) process exits before triage, threat behavior in Sysmon data -> post-mortem alert"""
+    d = tempfile.mkdtemp()
+    fake = os.path.join(d, "dropper.exe")
+    with open(fake, "wb") as f:
+        f.write(b"MZ not a real program")                    # unsigned -> UNKNOWN
+    reset_agent_state(extractor=FakeExtractor(image=fake), score=0.97)
+    pid = _dead_pid()
+    with LogCapture() as cap:
+        agent.handle_new_process(pid, "dropper.exe")
+        assert pid in agent.behavior_monitor.watched()
+        _settle_ghosts()
+    assert cap.has("[POST-MORTEM THREAT]") and cap.has("dropper.exe")
+    assert pid not in agent.behavior_monitor.watched()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+@test
+def t27_ghost_trusted_binary_not_scored():
+    """(#32) ghost of a Microsoft-signed, non-abusable binary is triaged as trusted, not scored"""
+    ping = os.path.join(os.environ["SystemRoot"], "System32", "PING.EXE")
+    reset_agent_state(extractor=FakeExtractor(image=ping), score=0.97)
+    pid = _dead_pid()
+    with LogCapture() as cap:
+        agent.handle_new_process(pid, "PING.EXE")
+        _settle_ghosts()
+    assert not cap.has("[SCORE]") and not cap.has("THREAT")
+    assert pid not in agent.behavior_monitor.watched()
+
+
+@test
+def t28_ghost_with_reused_pid_not_judged():
+    """(#32) Sysmon image no longer matches the WMI name (PID reused) -> no verdict"""
+    reset_agent_state(extractor=FakeExtractor(image=r"C:\Other\newproc.exe"), score=0.97)
+    pid = _dead_pid()
+    with LogCapture() as cap:
+        agent.handle_new_process(pid, "oldproc.exe")
+        _settle_ghosts()
+    assert not cap.has("[SCORE]") and cap.has("no longer matches")
+
+
+@test
+def t29_ghost_ignored_on_simulated_data():
+    """(#32) without real Sysmon data a ghost is only logged, never judged"""
+    reset_agent_state(extractor=FakeExtractor(simulated=True, image=r"C:\x.exe"), score=0.97)
+    pid = _dead_pid()
+    agent.handle_new_process(pid, "x.exe")
+    assert pid not in agent.behavior_monitor.watched()
 
 
 # ───────────────────────── summary ─────────────────────────

@@ -1,6 +1,6 @@
-# Enterprise Two-Tier EDR: Master Operational & Execution Guide (HOW TO RUN)
+# Telltale: Master Operational & Execution Guide (HOW TO RUN)
 
-This document provides a comprehensive operational guide for the **Enterprise Two-Tier Endpoint Detection & Response (EDR)** project. It details the purpose of every file in the repository, provides copy-pasteable execution commands, and outlines how to conduct a live evaluator demonstration.
+This document provides a comprehensive operational guide for the **Telltale** project. It details the purpose of every file in the repository, provides copy-pasteable execution commands, and outlines how to conduct a live evaluator demonstration.
 
 ---
 
@@ -8,48 +8,30 @@ This document provides a comprehensive operational guide for the **Enterprise Tw
 
 ```
 d:/project4/
-│
-├── [ PRODUCTION CORE FILES - PRESERVED & UNTOUCHED ]
-│   ├── agent.py                            # Endpoint EDR agent (WMI hooks, WinTrust L1, ONNX Tier-1 inference, watchdog)
-│   ├── server.py                           # Cloud Tier-2 FastAPI server (Hosts tier2_behavioral.pt, /score, /health endpoints)
-│   ├── test_agent.py                       # Automated test suite for agent.py functionality
-│   ├── whitelist.db                        # SQLite B-tree database storing pre-approved enterprise SHA-256 hashes (L1B)
-│   ├── train_tier1.py                      # Original sequence-based Tier 1 training script
-│   ├── train_tier1_behavioral.py           # 5-Seed GroupKFold training for Tier-1 Behavioral MLP (Produces ONNX & PT)
-│   ├── train_tier2.py                      # Original sequence-based Tier 2 training script
-│   ├── train_tier2_behavioral.py           # 5-Seed GroupKFold training for Tier-2 Behavioral ResNet with BatchNorm1d
-│   ├── tier1_behavioral.onnx               # Compiled Tier-1 ONNX model (10.8 KB, sub-millisecond edge CPU inference)
-│   ├── tier1_behavioral.pt                 # PyTorch checkpoint for Tier-1 Behavioral MLP
-│   ├── tier2_behavioral.pt                 # PyTorch checkpoint for Tier-2 Behavioral ResNet (Heavy Cloud Brain)
-│   └── dataset/
-│       └── behavioral_dataset.npz          # 1,470 balanced process traces (735 benign, 735 malware) with 99 features
-│
-├── [ LIVE DASHBOARDS & USER INTERFACES ]
-│   ├── edr_soc_dashboard.py                # Streamlit SOC Dashboard matching exact screenshot layout (@st.fragment real-time)
-│   ├── web_app.py                          # High-performance FastAPI backend with WebSockets (/ws) on port 5050
-│   ├── static/                             # Frontend assets for web_app.py (Cyber SOC SPA, Canvas gauges)
-│   └── how/                                # Interactive Presentation Website with embedded diagrams & Grilling Mode:
-│       ├── index.html                      # Storytelling presentation HTML with interactive Mermaid.js & simulator
-│       ├── style.scss                      # SCSS styling source
-│       ├── style.css                       # Compiled CSS stylesheet
-│       ├── app.js                          # Client-side JavaScript controller (View switcher, Lightbox, Simulator)
-│       └── assets/                         # High-resolution PNG architectural diagrams
-│
-├── [ MASTER PRESENTATION & DOCUMENTATION ]
-│   ├── enterprise_two_tier_edr_master_deck.pptx # 20-Slide Widescreen Master PowerPoint with 7 embedded diagrams & notes
-│   ├── build_master_edr_presentation_v2.py # Python script using python-pptx to generate the master presentation deck
-│   ├── generate_diagram_assets.py          # Script generating 7 publication-grade diagram PNGs via Matplotlib
-│   ├── diagram_assets/                     # Directory containing generated high-resolution diagram PNGs
-│   ├── diagrams.md                         # Master Mermaid diagram source code (7 flowcharts & lifecycle diagrams)
-│   ├── architecture_and_feature_engineering.txt # Comprehensive TXT guide (Architecture, 99 features, full PPTX transcript)
-│   └── HOW_TO_RUN.md                       # This master operational guide
+├── agent.py                     # endpoint agent (alert mode by default)
+├── test_agent.py                # agent test suite
+├── server.py                    # Tier-2 FastAPI service
+├── install_windows.ps1          # one-command setup (Sysmon + sensor + auto-start task)
+├── edr_sensor/                  # Rust Sysmon feature sensor (+ live/ tests and Sysmon config)
+├── train_tier1_behavioral.py    # Tier-1 behavioral MLP training (ONNX + PT)
+├── train_tier2_behavioral.py    # Tier-2 behavioral ResNet training
+├── build_behavioral_dataset.py  # LMD-2023 -> 99 behavioral features
+├── tier1_behavioral.onnx, tier1_behavioral.pt, tier2_behavioral.pt
+├── dataset/behavioral_dataset.npz
+├── web_app.py + static/         # SOC command center on port 5050
+├── edr_soc_dashboard.py         # Streamlit SOC dashboard on port 8501
+├── how/                         # interactive walkthrough site (diagram PNGs in how/assets/)
+├── site/                        # public landing & download page
+├── generate_diagram_assets.py   # regenerates how/assets/*.png
+├── diagrams.md                  # Mermaid diagram sources
+└── architecture_and_feature_engineering.txt
 ```
 
 ---
 
 ## 2. Quickstart Execution Guide
 
-To run the complete Enterprise Two-Tier EDR system with live real-time communication, use the following terminal setup:
+To run the complete Telltale system with live real-time communication, use the following terminal setup:
 
 ### Terminal 1: Launch Cloud Heavy Brain (`server.py`)
 Hosts the deep Behavioral ResNet model on port 8000. It receives escalated grey-zone processes from endpoints.
@@ -157,9 +139,6 @@ Follow this exact sequence to demonstrate the system live:
 5. **Show the Interactive Presentation & Evaluator Grilling Mode:**
    - In Terminal 4: Run `python web_app.py` and open `http://127.0.0.1:5050/how/` in a new tab.
    - Walk through the interactive chapters, toggle between diagram views, open the Lightbox zoom, and demonstrate the **Evaluator Grilling Mode** accordion to answer tough questions.
-6. **Show the Master PowerPoint Deck:**
-   - Open `enterprise_two_tier_edr_master_deck.pptx`.
-   - Show that every slide contains embedded high-resolution diagrams and full speaker notes in the notes section.
 
 ---
 

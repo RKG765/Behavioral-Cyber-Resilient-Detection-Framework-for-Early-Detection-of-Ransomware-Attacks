@@ -1,7 +1,7 @@
 """
 edr_soc_dashboard.py
 ====================
-Enterprise Two-Tier EDR -- Real-Time Streamlit SOC Command Center
+Telltale -- Real-Time Streamlit SOC Command Center
 Matches the exact UI layout from the user's dashboard screenshot, powered by
 modular zero-refresh fragments (@st.fragment(run_every="2s")).
 
@@ -43,7 +43,7 @@ import plotly.graph_objects as go
 # PAGE CONFIGURATION
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Enterprise Two-Tier EDR | SOC Command Center",
+    page_title="Telltale | SOC Command Center",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -720,7 +720,7 @@ with tabs[0]:
 # TAB 2: SYSTEM ARCHITECTURE & MERMAID DIAGRAMS
 # =============================================================================
 with tabs[1]:
-    st.markdown("## 📊 Enterprise Two-Tier EDR: Comprehensive Architectural Schematics")
+    st.markdown("## 📊 Telltale: Comprehensive Architectural Schematics")
     st.markdown("All diagrams are sourced directly from [`diagrams.md`](file:///d:/project4/diagrams.md) to illustrate the end-to-end system design:")
 
     st.markdown("### 1. The Legacy EDR Problem Statement: Trilemma")
@@ -746,7 +746,7 @@ with tabs[1]:
             G["Static Signatures & Threshold Rules"] -->|"High False Positive Rate"| H["SOC Alert Fatigue (95%+ False Alarms)"]
             H --> I["Missed True Zero-Day Threats"]
         end
-        subgraph ProposedSolution["Our Proposed Two-Tier EDR Solution"]
+        subgraph ProposedSolution["Telltale: Proposed Two-Tier Solution"]
             J["Tier 1: Ultra-Fast Edge Gatekeeper (<1.8ms, <150MB RSS)"]
             K["Tier 2: Deep Cloud Heavy Brain (ResNet + XAI Attribution)"]
             L["Asymmetric Grey-Zone Escalation (Only 5-10% sent to Cloud)"]

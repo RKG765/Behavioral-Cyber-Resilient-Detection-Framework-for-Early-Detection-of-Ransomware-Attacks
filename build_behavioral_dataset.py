@@ -3,7 +3,7 @@ build_behavioral_dataset.py
 ===========================
 Rebuilds the training set with GENERALIZABLE BEHAVIORAL FEATURES.
 
-What it fixes (see data_audit_images.txt):
+What it fixes (found in an earlier audit of the raw image paths):
   * DROPS every Splunk-forwarder process (lab monitoring agent mislabeled as malware)
   * NEVER feeds raw Image / ParentImage / path / user strings to a model;
     only booleans, categories (mapped) and log-scaled counts are produced

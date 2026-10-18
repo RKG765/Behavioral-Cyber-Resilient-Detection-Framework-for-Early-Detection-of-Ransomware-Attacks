@@ -21,8 +21,10 @@ Model:    tier2_behavioral.pt  (Tier2BehavioralNet -- ResNet MLP 99->64->64->1)
 Threshold: tier2_behavioral_threshold.json (data-driven, FPR < 1%)
 
 Run:
-    pip install fastapi uvicorn torch numpy
-    uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+    pip install -r requirements.txt
+    uvicorn server:app --host 127.0.0.1 --port 8000
+    (The API has no authentication -- keep it on localhost unless it sits
+     behind a reverse proxy with TLS and auth.)
 
 Demo flow:
     Terminal 1 (Cloud):    uvicorn server:app

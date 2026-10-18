@@ -1,6 +1,11 @@
-# Behavioral Cyber-Resilient Detection Framework for Early Detection of Ransomware Attacks
+# Telltale
 
-[![Architecture: Asymmetric Two-Tier EDR](https://img.shields.io/badge/Architecture-Asymmetric%20Two--Tier%20EDR-00E5FF.svg?style=flat-square)](#system-architecture)
+**Behavioral ransomware detection for Windows.** Telltale catches ransomware by what it does,
+not what it's called: every new process is judged on the behavior that gives it away.
+
+*Research title: Behavioral Cyber-Resilient Detection Framework for Early Detection of Ransomware Attacks*
+
+[![Architecture: Asymmetric Telltale](https://img.shields.io/badge/Architecture-Asymmetric%20Two--Tier%20EDR-00E5FF.svg?style=flat-square)](#system-architecture)
 [![Edge Latency: <1.8ms](https://img.shields.io/badge/Edge%20Inference-%3C1.8ms%20(Single%20Core)-00E676.svg?style=flat-square)](#tier-1-edge-gatekeeper-hardware-benchmarks)
 [![Edge Model Footprint: 10.8 KB](https://img.shields.io/badge/ONNX%20Model-10.8%20KB-blue.svg?style=flat-square)](#tier-1-edge-gatekeeper-hardware-benchmarks)
 [![Cloud Brain: Residual Network](https://img.shields.io/badge/Cloud%20Brain-Behavioral%20ResNet-7C4DFF.svg?style=flat-square)](#tier-2-cloud-heavy-brain-architecture)
@@ -483,6 +488,8 @@ At this operating point, Tier 2 achieves **99.26% Precision**, guaranteeing ente
 
 ## 7. Empirical Benchmarks & Scientific Rigor
 
+> **Note:** the cross-validation figures in this section pick the operating threshold on the same folds they score, which makes them optimistic. For an unbiased estimate see the hold-out results in [section 14](#hold-out-results-honest-baseline): TPR 92.1%, FPR 2.8%.
+
 ### 7.1 Preventing Data Leakage via Strict 5-Seed GroupKFold
 
 ```mermaid
@@ -521,7 +528,7 @@ To ensure genuine out-of-sample generalization, our validation enforces **Strict
 
 ### 7.2 Benchmark Performance Matrix
 
-| Evaluation Metric | Tier 1 Edge ONNX | Tier 2 Cloud ResNet | Combined Two-Tier EDR | Target SLA | Outcome |
+| Evaluation Metric | Tier 1 Edge ONNX | Tier 2 Cloud ResNet | Combined Pipeline | Target SLA | Outcome |
 |---|---|---|---|---|---|
 | **Mean Accuracy (5-Seed Avg)** | $95.84\% \pm 0.92\%$ | **$97.03\% \pm 0.65\%$** | **$98.12\%$** | $> 95.0\%$ | **PASS** |
 | **ROC AUC Score** | $0.9892 \pm 0.005$ | **$0.9967 \pm 0.003$** | **$0.9981$** | $> 0.980$ | **PASS** |
@@ -665,7 +672,7 @@ The framework provides two zero-refresh user interfaces:
 - [x] **Explainable AI Engine:** Integrated Gradients feature attribution streaming to SOC.
 - [x] **Zero-Refresh Streamlit SOC Dashboard (`edr_soc_dashboard.py`):** Modular telemetry streaming via `@st.fragment(run_every="1s")`.
 - [x] **WebSocket Cyber Command Portal (`web_app.py`):** Port 5050 FastAPI portal with canvas gauges and interactive attack simulation.
-- [x] **Publication & Presentation Suite:** Master widescreen slide deck (`enterprise_two_tier_edr_master_deck.pptx`), interactive website (`/how/`), and publication diagrams.
+- [x] **Publication Suite:** interactive walkthrough website (`/how/`), public landing page (`site/`), and publication diagrams.
 
 ---
 
@@ -718,102 +725,119 @@ flowchart LR
 ## 14. Installation & Quickstart
 
 ### Prerequisites
-- Windows 10/11 or Windows Server 2019/2022 (x86_64)
-- Python 3.10 or higher
-- Administrator privileges (required for WMI process event monitoring and termination)
+- Windows 10/11 x64 (or Windows Server 2019/2022)
+- Python 3.10+ on PATH
+- [Rust](https://rustup.rs) (MSVC toolchain) -- builds the `edr_sensor` Sysmon extension
+- Administrator rights (process events, Sysmon channel, process termination)
 
-### Step 1: Clone Repository & Install Dependencies
+### Install on a real machine (one command)
 
-```powershell
-git clone https://github.com/RKG765/Behavioral-Cyber-Resilient-Detection-Framework-for-Early-Detection-of-Ransomware-Attacks.git
-cd Behavioral-Cyber-Resilient-Detection-Framework-for-Early-Detection-of-Ransomware-Attacks
-
-pip install torch torchvision onnxruntime fastapi uvicorn streamlit psutil wmi requests python-pptx scikit-learn numpy pandas
-```
-
-### Step 2: Launch Cloud Tier 2 Heavy Brain
+From an **Administrator PowerShell** in the repository folder:
 
 ```powershell
-python -m uvicorn server:app --host 127.0.0.1 --port 8000
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1
 ```
-- Health Check: `http://127.0.0.1:8000/health`
-- Expected Output: `{"status":"ok", "model":"tier2_behavioral.pt", "threshold":0.6546}`
 
-### Step 3: Launch Endpoint EDR Agent
+This installs the Python requirements and builds the Rust sensor. It installs Sysmon with
+[`edr_sensor/live/sysmon_edr.xml`](edr_sensor/live/sysmon_edr.xml), downloading it from
+Microsoft Sysinternals and checking its signature. Running it accepts the Sysmon EULA.
+Finally it registers the agent as a scheduled task that starts as SYSTEM at boot.
 
-Open an **Administrator PowerShell** terminal:
+**The agent runs in `alert` mode by default.** Threats are written to `agent.log` as
+`[ALERT] THREAT` lines and nothing is killed. The models have a measurable false-positive
+rate (see the hold-out numbers below), so only turn on killing after watching alert mode on
+your own machines:
 
 ```powershell
-python agent.py
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1 -Mode enforce
 ```
-*Note: The agent can also be launched with 1-click directly from the Streamlit SOC Dashboard.*
 
-### Step 4: Launch Real-Time SOC Command Center
+| Command | Purpose |
+|---|---|
+| `Get-Content agent.log -Wait -Tail 20` | watch verdicts live |
+| `install_windows.ps1 -Uninstall` | remove the auto-start task |
+| `install_windows.ps1 -Uninstall -RemoveSysmon` | also uninstall Sysmon |
+| `edr_sensor\live
+un_live_test.ps1` | end-to-end check with harmless activity |
+| `python test_agent.py` | agent test suite |
+
+Without Rust, the agent falls back to **simulated** features. It runs, but it detects nothing and never kills.
+
+### Optional: Tier-2 service and dashboards
 
 ```powershell
-streamlit run edr_soc_dashboard.py --server.port 8501
+pip install -r requirements-cloud.txt
+python -m uvicorn server:app --host 127.0.0.1 --port 8000      # Tier 2 (no auth -- keep on localhost)
+pip install -r requirements-dev.txt
+streamlit run edr_soc_dashboard.py                             # SOC dashboard (localhost only)
+python web_app.py                                              # portal at http://127.0.0.1:5050/
 ```
-- Navigate to: `http://127.0.0.1:8501`
-- Observe live host CPU/RAM telemetry, agent memory footprint, and the live attack escalation simulator.
 
-### Step 5 (Optional): Launch Interactive Web App & Presentation Suite
+Set `EDR_CLOUD_URL` if Tier 2 runs elsewhere. `server.py` and `web_app.py` have no
+authentication, so put them behind TLS and an authenticating reverse proxy before exposing
+them to a network.
 
-```powershell
-python web_app.py
-```
-- Interactive Presentation & Deep Dive Suite: `http://127.0.0.1:5050/how/`
-- WebSocket Real-Time Console: `http://127.0.0.1:5050/`
+### Hold-out results (honest baseline)
+
+Evaluation copies of both models were trained without a 20% hold-out (duplicates grouped,
+threshold picked on a separate calibration split -- see
+[`edr_sensor/live/build_holdout.py`](edr_sensor/live/build_holdout.py)). On those 294 unseen
+processes:
+
+| | TPR | FPR | AUC |
+|---|---|---|---|
+| Tier 1 (0.5) | 94.7% | 6.3% | 0.992 |
+| Tier 2 (calibrated 0.689) | 92.1% | 2.8% | 0.989 |
+| Two-tier pipeline | 92.1% | 2.8% | -- |
+
+39% of these processes landed in the Tier-1 grey zone. The cross-validation figures in
+section 7 tuned the threshold on the same folds they report, so expect real-world numbers
+closer to this table. All training data comes from lab machines (LMD-2023), so expect more
+false positives on everyday PCs than shown here.
 
 ---
 
 ## 15. Repository Structure
 
 ```
-├── .gitignore                                  # Git exclusion configuration (protects large raw datasets & logs)
-├── README.md                                   # Master architectural & technical documentation
-├── HOW_TO_RUN.md                               # Step-by-step operational runbook and evaluator demo guide
+├── README.md, HOW_TO_RUN.md, LICENSE
+├── requirements.txt / requirements-cloud.txt / requirements-dev.txt
+├── install_windows.ps1                 # one-command setup on a real machine (Sysmon + sensor + auto-start)
 │
-├── [ PRODUCTION CORE COMPONENTS ]
-│   ├── agent.py                                # Endpoint EDR agent (WMI hooks, WinTrust L1, ONNX Tier-1 inference)
-│   ├── server.py                               # Cloud Tier-2 FastAPI server (Hosts ResNet, /score, /health endpoints)
-│   ├── test_agent.py                           # Unit & integration test suite for endpoint agent
-│   ├── whitelist.db                            # SQLite B-Tree database for L1B enterprise hash whitelisting
-│   ├── whitelist_data.txt                      # Schema definition and inspection report for whitelist.db
-│   ├── tier1_behavioral.onnx                   # Compiled Tier-1 ONNX model (10.8 KB, sub-millisecond edge CPU)
-│   ├── tier1_behavioral.pt                     # PyTorch state dict for Tier-1 Behavioral MLP
-│   ├── tier2_behavioral.pt                     # PyTorch state dict for Tier-2 Behavioral ResNet (Heavy Cloud Brain)
-│   ├── tier1_behavioral_metrics.json           # 5-Seed GroupKFold cross-validation metrics for Tier 1
-│   ├── tier2_behavioral_metrics.json           # 5-Seed GroupKFold cross-validation metrics for Tier 2
-│   ├── tier2_behavioral_threshold.json         # Data-driven operating threshold per seed (Theta = 0.6546)
-│   └── dataset/
-│       ├── behavioral_dataset.npz              # Curated 1,470 balanced process traces with 99 continuous features
-│       ├── behavioral_dataset_meta.json        # Metadata and feature indices for behavioral dataset
-│       ├── clean_split.json                    # Leak-free ProcessGuid train/validation splits
-│       └── sequence_stats.json                 # Statistical distributions across telemetry features
+├── [ ENDPOINT AGENT ]
+│   ├── agent.py                        # WMI triage, trust checks, behavior monitor, Tier-1 ONNX, alert/enforce
+│   ├── test_agent.py                   # agent test suite (python test_agent.py)
+│   ├── whitelist.db                    # L1B custom SHA-256 whitelist
+│   ├── tier1_behavioral.onnx(.data)    # Tier-1 behavioral MLP (on-device)
+│   └── edr_sensor/                     # Rust (PyO3) Sysmon sensor: live events -> 99 features
+│       ├── src/                        # features.rs (1:1 port of the dataset builder), collector.rs (EvtSubscribe), ...
+│       ├── parity_check.py             # proves Rust features == training features (1470/1470)
+│       └── live/                       # Sysmon config, live test, hold-out builder + evaluation models
 │
-├── [ MODEL TRAINING & SCIENTIFIC EVALUATION ]
-│   ├── train_tier1_behavioral.py               # 5-Seed GroupKFold trainer for Tier-1 MLP (Exports ONNX & PT)
-│   ├── train_tier2_behavioral.py               # 5-Seed GroupKFold trainer for Tier-2 ResNet with BatchNorm1d
-│   ├── analyze_tier2_errors.py                 # Error analysis script uncovering sequence conflict ceilings
-│   ├── tier2_error_analysis.txt                # Empirical proof of the 90.03% token accuracy ceiling
-│   ├── architecture_and_feature_engineering.txt# 700-line master technical reference (99 features & slide scripts)
-│   └── data_distribution.md                   # Class distribution and dataset balance documentation
+├── [ TIER-2 SERVICE ]
+│   ├── server.py                       # FastAPI /score + /health (localhost by default)
+│   ├── tier2_behavioral.pt             # Tier-2 behavioral ResNet
+│   └── tier2_behavioral_threshold.json # operating threshold
 │
-├── [ SOC INTERFACES & WEB COMMAND CENTER ]
-│   ├── edr_soc_dashboard.py                    # Streamlit SOC dashboard with zero-refresh @st.fragment
-│   ├── web_app.py                              # FastAPI WebSocket server for real-time telemetry on port 5050
-│   ├── static/                                 # Frontend cyber UI assets (HTML5 Canvas gauges, CSS, JS)
-│   └── how/                                    # Interactive storytelling presentation website with simulator
-│       ├── index.html                          # Presentation HTML with embedded diagrams & Grilling Mode
-│       ├── app.js                              # Client-side JavaScript interactive controller
-│       └── style.css                           # High-contrast cyber dashboard styling
+├── [ DATA & TRAINING ]
+│   ├── build_behavioral_dataset.py     # LMD-2023 CSV -> 99 behavioral features per process
+│   ├── train_tier1_behavioral.py       # Tier-1 MLP, 5-seed GroupKFold, ONNX export
+│   ├── train_tier2_behavioral.py       # Tier-2 ResNet, 5-seed GroupKFold
+│   ├── tier1/2_behavioral_metrics.json # cross-validation metrics
+│   ├── analyze_tier2_errors.py + tier2_error_analysis.txt   # why event-ID sequence models plateau
+│   ├── data_distribution.md            # class balance notes
+│   └── dataset/behavioral_dataset.npz (+ _meta.json)        # 1,470 processes x 99 features
 │
-└── [ PRESENTATION & DIAGRAM ASSETS ]
-    ├── enterprise_two_tier_edr_master_deck.pptx# 20-slide widescreen presentation deck with speaker notes
-    ├── build_master_edr_presentation_v2.py     # Python script generating presentation deck via python-pptx
-    ├── generate_diagram_assets.py              # Script generating 7 high-resolution diagram PNGs
-    ├── diagram_assets/                         # Directory containing generated architectural diagram PNGs
-    └── diagrams.md                             # Source code for all 7 Mermaid architecture & lifecycle diagrams
+├── [ INTERFACES ]
+│   ├── web_app.py + static/            # SOC command center (http://127.0.0.1:5050)
+│   ├── edr_soc_dashboard.py            # Streamlit SOC dashboard
+│   ├── how/                            # interactive architecture walkthrough (+ diagram PNGs in how/assets/)
+│   └── site/                           # public landing & download page (static, GitHub Pages ready)
+│
+└── [ DOCS & DIAGRAMS ]
+    ├── diagrams.md                     # Mermaid sources for the architecture diagrams
+    ├── generate_diagram_assets.py      # regenerates the PNGs in how/assets/
+    └── architecture_and_feature_engineering.txt   # long-form architecture & feature reference
 ```
 
 ---

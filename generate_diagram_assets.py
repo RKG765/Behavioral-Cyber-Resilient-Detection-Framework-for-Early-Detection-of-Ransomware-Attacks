@@ -7,13 +7,13 @@ These diagrams visually represent the Mermaid flows from diagrams.md and
 are embedded directly into PowerPoint slides.
 
 Outputs:
-  diagram_assets/diag1_problem_trilemma.png
-  diagram_assets/diag2_full_architecture.png
-  diagram_assets/diag3_scoring_criteria.png
-  diagram_assets/diag4_dataset_groupkfold.png
-  diagram_assets/diag5_tier1_mlp.png
-  diagram_assets/diag6_tier2_resnet.png
-  diagram_assets/diag7_evolution_journey.png
+  how/assets/diag1_problem_trilemma.png
+  how/assets/diag2_full_architecture.png
+  how/assets/diag3_scoring_criteria.png
+  how/assets/diag4_dataset_groupkfold.png
+  how/assets/diag5_tier1_mlp.png
+  how/assets/diag6_tier2_resnet.png
+  how/assets/diag7_evolution_journey.png
 """
 
 import sys
@@ -25,7 +25,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diagram_assets")
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "how", "assets")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # Cyber Theme Palette
@@ -320,4 +320,4 @@ p7 = os.path.join(OUT_DIR, "diag7_evolution_journey.png")
 plt.savefig(p7, dpi=300, facecolor=BG_COLOR, bbox_inches='tight')
 plt.close()
 
-print("[SUCCESS] All 7 diagram assets successfully generated in diagram_assets/!")
+print("[SUCCESS] All 7 diagram assets successfully generated in how/assets/!")

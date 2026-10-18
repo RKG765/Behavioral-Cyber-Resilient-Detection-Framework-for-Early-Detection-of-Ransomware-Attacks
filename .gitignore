@@ -1,5 +1,5 @@
 # ==============================================================================
-# Enterprise Two-Tier EDR: Git Ignore Specification
+# Telltale: Git Ignore Specification
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -114,8 +114,16 @@ generate_presentation.py
 # ------------------------------------------------------------------------------
 !dataset/behavioral_dataset.npz
 !dataset/behavioral_dataset_meta.json
-!dataset/clean_split.json
-!dataset/sequence_stats.json
-!dataset/balanced_training_sequences.json
-!dataset/balanced_training_sequences.xlsx
 
+
+# ------------------------------------------------------------------------------
+# Rust extension build output
+# ------------------------------------------------------------------------------
+edr_sensor/target/
+edr_sensor/dist/
+
+# Sysmon download (install_windows.ps1) and regenerable evaluation artifacts
+tools/
+edr_sensor/live/holdout/
+edr_sensor/live/results/
+.streamlit/secrets.toml

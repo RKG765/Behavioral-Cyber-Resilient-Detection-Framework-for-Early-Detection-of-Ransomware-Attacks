@@ -1,0 +1,10 @@
+# Endpoint agent (Tier 1) -- what a protected Windows machine needs.
+# Windows 10/11 x64, Python 3.10+. Torch is NOT needed on the endpoint.
+numpy>=1.24
+onnxruntime>=1.17
+psutil>=5.9
+WMI>=1.5.1
+pywin32>=306
+requests>=2.31
+# Live Sysmon features: build the Rust extension (see edr_sensor/README.md)
+#   pip install maturin && python -m maturin build --release -m edr_sensor/Cargo.toml

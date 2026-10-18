@@ -1,6 +1,6 @@
-# Enterprise Two-Tier EDR: Comprehensive Architectural Diagrams & Lifecycle Flows
+# Telltale: Comprehensive Architectural Diagrams & Lifecycle Flows
 
-This document contains the complete set of architectural diagrams, process lifecycle evaluation flows, dataset engineering pipelines, model schematics, and the engineering evolution story for the Enterprise Two-Tier EDR system.
+This document contains the complete set of architectural diagrams, process lifecycle evaluation flows, dataset engineering pipelines, model schematics, and the engineering evolution story for the Telltale system.
 
 ---
 
@@ -21,7 +21,7 @@ flowchart TD
         H --> I["Missed True Zero-Day Threats"]
     end
     
-    subgraph ProposedSolution["Our Proposed Two-Tier EDR Solution"]
+    subgraph ProposedSolution["Telltale: Proposed Two-Tier Solution"]
         J["Tier 1: Ultra-Fast Edge Gatekeeper (<1.8ms, <150MB RSS)"]
         K["Tier 2: Deep Cloud Heavy Brain (ResNet + XAI Attribution)"]
         L["Asymmetric Grey-Zone Escalation (Only 5-10% sent to Cloud)"]
