@@ -5,20 +5,23 @@ not what it's called: every new process is judged on the behavior that gives it 
 
 *Research title: Behavioral Cyber-Resilient Detection Framework for Early Detection of Ransomware Attacks*
 
-[![Architecture: Asymmetric Telltale](https://img.shields.io/badge/Architecture-Asymmetric%20Two--Tier%20EDR-00E5FF.svg?style=flat-square)](#system-architecture)
-[![Edge Latency: <1.8ms](https://img.shields.io/badge/Edge%20Inference-%3C1.8ms%20(Single%20Core)-00E676.svg?style=flat-square)](#tier-1-edge-gatekeeper-hardware-benchmarks)
-[![Edge Model Footprint: 10.8 KB](https://img.shields.io/badge/ONNX%20Model-10.8%20KB-blue.svg?style=flat-square)](#tier-1-edge-gatekeeper-hardware-benchmarks)
-[![Cloud Brain: Residual Network](https://img.shields.io/badge/Cloud%20Brain-Behavioral%20ResNet-7C4DFF.svg?style=flat-square)](#tier-2-cloud-heavy-brain-architecture)
-[![Tier 2 Accuracy: 97.03%](https://img.shields.io/badge/Accuracy-97.03%25-brightgreen.svg?style=flat-square)](#empirical-benchmarks--scientific-rigor)
-[![ROC AUC: 0.9967](https://img.shields.io/badge/ROC%20AUC-0.9967-success.svg?style=flat-square)](#empirical-benchmarks--scientific-rigor)
-[![Precision: 99.26%](https://img.shields.io/badge/Precision%20%40%20FPR%3C1%25-99.26%25-emerald.svg?style=flat-square)](#empirical-benchmarks--scientific-rigor)
-[![False Alarm Suppression: 99.51%](https://img.shields.io/badge/False%20Alarm%20Reduction-99.51%25-teal.svg?style=flat-square)](#empirical-benchmarks--scientific-rigor)
+[![Architecture: Two-Tier](https://img.shields.io/badge/Architecture-Two--Tier%20Behavioral-00E5FF.svg?style=flat-square)](#3-system-architecture)
+[![Sensor: Sysmon + Rust](https://img.shields.io/badge/Sensor-Sysmon%20%2B%20Rust-orange.svg?style=flat-square)](#14-installation--quickstart)
+[![Hold-out TPR: 92.1%](https://img.shields.io/badge/Hold--out%20TPR-92.1%25-brightgreen.svg?style=flat-square)](#hold-out-results-honest-baseline)
+[![Hold-out FPR: 2.8%](https://img.shields.io/badge/Hold--out%20FPR-2.8%25-yellow.svg?style=flat-square)](#hold-out-results-honest-baseline)
+[![Default mode: alert](https://img.shields.io/badge/Default%20Mode-alert--only-blue.svg?style=flat-square)](#14-installation--quickstart)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg?style=flat-square)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-lightgrey.svg?style=flat-square)](LICENSE)
 
-An enterprise-grade, **Asymmetric Edge-Cloud Collaborative Endpoint Detection & Response (EDR)** framework engineered to detect, classify, and neutralize modern polymorphic and fast-encrypting ransomware strains at the kernel spawn boundary.
+A **two-tier behavioral EDR** for Windows. The agent watches each new, untrusted process through
+Sysmon, turns its first 50 events into 99 behavioral features, and scores them with a small
+on-device MLP (ONNX). Clear cases are decided on the endpoint; ambiguous "grey-zone" scores go
+to a second model behind a FastAPI service.
 
-By decoupling **sub-millisecond local gatekeeping (<1.8ms at the edge)** from **deep contextual reasoning in the cloud**, this system resolves the classical EDR trilemma—eliminating cloud transmission latency, preventing workstation CPU/battery exhaustion, and suppressing over 99.5% of false-positive alert fatigue.
+The design keeps clear-cut decisions on the endpoint (no network round trip), keeps the endpoint
+model cheap, and sends only ambiguous cases to Tier 2. Read the
+[hold-out results](#hold-out-results-honest-baseline) before relying on any number here: on 294
+unseen processes the two-tier pipeline caught 92.1% of malware at a 2.8% false-positive rate.
 
 ---
 
@@ -45,7 +48,7 @@ By decoupling **sub-millisecond local gatekeeping (<1.8ms at the edge)** from **
   - [7.3 Hardware Feasibility & Edge Footprint](#73-hardware-feasibility--edge-footprint)
 - [8. Engineering Evolution: Real-World Hurdles & Applied Solutions](#8-engineering-evolution-real-world-hurdles--applied-solutions)
   - [8.1 Evolution Timeline](#81-evolution-timeline)
-  - [8.2 Problem 1: WinTrust OS API Thread Deadlocks](#82-problem-1-wintrust-os-api-thread-deadlocks)
+  - [8.2 Problem 1: Signature Checks That Spawned PowerShell](#82-problem-1-signature-checks-that-spawned-powershell)
   - [8.3 Problem 2: ProcessGuid Data Leakage Trap](#83-problem-2-processguid-data-leakage-trap)
   - [8.4 Problem 3: Catastrophic Collapse on Fold 5 (Seed 2024)](#84-problem-3-catastrophic-collapse-on-fold-5-seed-2024)
 - [9. Explainable AI (XAI) & Analyst Cockpit](#9-explainable-ai-xai--analyst-cockpit)
@@ -60,13 +63,23 @@ By decoupling **sub-millisecond local gatekeeping (<1.8ms at the edge)** from **
 
 ## 1. Executive Summary
 
-Modern cyberattacks—specifically fast-encrypting ransomware (e.g., LockBit 3.0, BlackCat) and living-off-the-land (LotL) intrusions—exploit a critical gap in traditional endpoint defenses. By issuing multi-threaded asynchronous I/O completion calls, modern encryptors can compromise hundreds of files in under 100 microseconds per file.
+Fast-encrypting ransomware (e.g., LockBit 3.0, BlackCat) and living-off-the-land intrusions can
+do real damage within seconds of starting, so Telltale scores behavior on the endpoint instead of
+waiting for a cloud round trip.
 
-This framework introduces an **Asymmetric Multi-Tiered Architecture** where:
-1. **Over 85% of standard endpoint binaries** bypass machine learning entirely via **Zero-Cost Fast-Path Gating** (native WinTrust Authenticode verification and in-memory LRU caching in $\le 0.2\text{ms}$).
-2. **Untrusted binaries** are monitored across a dynamic 30-second sliding window that computes **99 behavioral structural invariants**.
-3. **Tier 1 Edge Gatekeeper** executes an optimized **10.8 KB ONNX Multi-Layer Perceptron (MLP)** on the local workstation CPU in **<1.8ms**, immediately allowing clear benign activity ($S_{T1} \le 0.10$) and terminating obvious ransomware ($S_{T1} \ge 0.90$).
-4. **Cloud Tier 2 Heavy Brain** receives only the remaining **5% to 10% ambiguous "Grey Zone" processes** ($0.10 < S_{T1} < 0.90$), evaluating them using a **Deep Behavioral Residual Network (ResNet)** with BatchNorm1d and streaming **Explainable AI (XAI)** attributions to SOC analysts.
+The pipeline:
+1. **Trust checks first.** Critical OS processes in protected paths, binaries signed by an
+   allow-listed publisher (native `WinVerifyTrust`), binaries in protected Windows folders and
+   SHA-256-whitelisted tools are skipped, and results are cached by `(path, mtime, size)`.
+   Abusable signed tools (shells, script hosts, LOLBins) are always monitored.
+2. **Behavior window.** Every other process is watched through Sysmon. The Rust `edr_sensor`
+   keeps each process's first 50 events and computes **99 behavioral features** from them,
+   exactly as the training set was built.
+3. **Tier 1 (endpoint).** A ~21K-parameter ONNX MLP scores the process every 2 s for up to 30 s
+   (up to 5 min if it stays silent). Score $\le 0.10$ is benign, $\ge 0.90$ is a threat.
+4. **Tier 2 (service).** Scores in between are POSTed to `server.py`, a residual MLP whose
+   threshold ($0.6546$) was chosen for < 1% FPR in cross-validation.
+5. **Alert by default.** Threats are logged; killing requires `--mode enforce`.
 
 ---
 
@@ -88,9 +101,9 @@ flowchart TD
     end
     
     subgraph ProposedSolution["Our Proposed Two-Tier Collaborative EDR"]
-        J["Tier 1 Edge Gatekeeper\n(<1.8ms Latency, 10.8 KB ONNX, <138MB RAM)"]
-        K["Tier 2 Cloud Heavy Brain\n(Deep ResNet + Integrated Gradients XAI)"]
-        L["Asymmetric Grey-Zone Escalation\n(Only 5% - 10% ambiguous events sent to Cloud)"]
+        J["Tier 1 Edge Model\n(~21K-parameter ONNX MLP, on-device)"]
+        K["Tier 2 Service\n(Residual MLP, threshold 0.6546)"]
+        L["Grey-Zone Escalation\n(only Tier-1 scores between 0.10 and 0.90)"]
         
         J --> L
         L --> K
@@ -102,7 +115,7 @@ flowchart TD
 ### The Breakdown:
 1. **The Cloud Latency Gap (300ms – 2,000ms):** Streaming raw telemetry over wide-area networks introduces catastrophic delay. By the time a cloud server receives events, infers a verdict, and returns a kill signal, the Master File Table (MFT) is corrupted.
 2. **The Edge Compute Ceiling:** Running heavy sequence models (LSTMs, Transformers) directly on user endpoints drains battery, causes input lag, and exceeds workstation memory budgets.
-3. **Alert Fatigue & Token Brittleness:** Legacy EDRs trained solely on sequential Sysmon EventIDs suffer from a mathematical accuracy ceiling of ~90% due to conflicting execution patterns between benign installers and malware droppers.
+3. **Alert Fatigue & Token Brittleness:** On our dataset, a model that sees only the Sysmon EventID sequence cannot exceed ~90% accuracy, because benign tools and malware produce identical sequences (section 5.1).
 
 ---
 
@@ -112,73 +125,72 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    subgraph Endpoint["ENDPOINT WORKSTATION (Edge Tier 1 Agent)"]
-        subgraph Ingestion["1. Kernel Process Interception"]
-            WMI["Windows WMI / ETW Hook\n(Win32_ProcessStartTrace)"] -->|"Capture PID, Path, Cmdline"| Worker["Worker Thread Pool\n(Non-blocking Dispatch)"]
+    subgraph Endpoint["ENDPOINT (agent.py + edr_sensor)"]
+        subgraph Ingestion["1. Process Start"]
+            WMI["WMI Win32_ProcessStartTrace"] -->|"PID, name"| Worker["Worker Thread Pool\n(8 workers, non-blocking)"]
         end
 
-        subgraph Tier0["2. Zero-Cost Fast-Path (L1 Whitelist)"]
-            Worker -->|"Extract Binary Metadata"| L1A{"L1A: WinTrust Authenticode\n(OS Certificate Chain)"}
-            L1A -->|"Valid Microsoft / Vendor Root"| AllowL1A["ALLOWED (LRU Cache)\n0.0ms ML Overhead"]
-            L1A -->|"Unsigned / Custom Tool"| L1B{"L1B: SQLite Whitelist Cache\n(Pre-approved SHA-256)"}
-            L1B -->|"Hash Match (<0.2ms)"| AllowL1B["ALLOWED (Trusted DB)\n0.0ms ML Overhead"]
+        subgraph Trust["2. Trust Checks (no ML)"]
+            Worker --> Crit{"Critical OS process\nin protected path?"}
+            Crit -->|"Yes"| Skip["SKIPPED"]
+            Crit -->|"No"| Watch{"Shell, script host\nor LOLBin?"}
+            Watch -->|"No"| Sig{"Cache hit, trusted publisher,\nprotected folder or\nSHA-256 whitelist?"}
+            Sig -->|"Yes"| Allow["ALLOWED (cached)"]
         end
 
-        subgraph FeatureExtraction["3. Dynamic 30s Behavioral Window"]
-            L1B -->|"Unseen / Untrusted Binary"| BM["Behavior Monitor Engine\n(Watches up to 30s sliding window)"]
-            BM -->|"Ring Buffer: File, Reg, Net, Syscall"| Extractor["Behavioral Feature Synthesizer\n(Calculates 99 Continuous Features)"]
+        subgraph Behavior["3. Behavior Window"]
+            Watch -->|"Yes (always watched)"| BM["BehaviorMonitor\n(scores every 2s for 30s,\nup to 5 min if dormant)"]
+            Sig -->|"No"| BM
+            Sysmon["Sysmon event log"] -->|"EvtSubscribe (push)"| Sensor["edr_sensor (Rust)\nfirst 50 events per ProcessGuid\n-> 99 features"]
+            Sensor --> BM
         end
 
-        subgraph Tier1Inference["4. Tier 1 Local Inference (<1.8ms)"]
-            Extractor --> ONNX["Tier 1 ONNX Edge Model\n(Lightweight Behavioral MLP)"]
-            ONNX -->|"Generates Suspicion Score S_T1"| ThresholdT1{"Tier 1 Decision Engine\nScore Gating"}
+        subgraph Tier1["4. Tier 1 (ONNX MLP, CPU)"]
+            BM --> ONNX["tier1_behavioral.onnx"]
+            ONNX --> T1{"Score S_T1"}
         end
 
-        subgraph EdgeDecisions["5. Edge Local Actions"]
-            ThresholdT1 -->|"S_T1 <= 0.10\n(Clear Benign)"| BenignAction["ALLOWED (Local Benign)\n0.00% False Negative Rate\nZero Cloud Egress"]
-            ThresholdT1 -->|"S_T1 >= 0.90\n(High-Confidence Malware)"| KillAction["IMMEDIATE TERMINATION\nWin32 TerminateProcess API\n< 2ms response time"]
-            ThresholdT1 -->|"0.10 < S_T1 < 0.90\n(Ambiguous Grey Zone)"| Dispatch["Asymmetric Cloud Escalation\n(Asynchronous HTTP POST)"]
-        end
+        T1 -->|"S_T1 <= 0.10"| Benign["BENIGN (logged)"]
+        T1 -->|"S_T1 >= 0.90"| Threat["THREAT\nalert mode: log\nenforce mode: kill"]
+        T1 -->|"0.10 < S_T1 < 0.90"| Dispatch["Escalate\n(HTTP POST, 5s timeout)"]
     end
 
-    subgraph Transport["SECURE TRANSPORT CHANNEL"]
-        Dispatch -->|"REST JSON Payload\nPID, ImageName, 99 Features"| CloudTunnel["FastAPI Microservice Gateway\n(Port 8000 / HTTPS)"]
+    subgraph Service["TIER 2 SERVICE (server.py, localhost by default)"]
+        Dispatch -->|"process_name, tier1_score, 99 features"| T2Model["Residual MLP\n(tier2_behavioral.pt)"]
+        T2Model --> T2Eval{"S_T2 >= 0.6546?"}
+        T2Eval -->|"No"| CloudAllow["BENIGN"]
+        T2Eval -->|"Yes"| CloudKill["KILL verdict"]
     end
 
-    subgraph Cloud["ENTERPRISE CLOUD TIER 2 (Heavy Brain)"]
-        subgraph Tier2Inference["6. Deep Contextual Reasoning"]
-            CloudTunnel --> T2Model["Tier 2 Cloud ResNet Model\n(Residual Deep Network with BatchNorm1d)"]
-            T2Model --> T2Eval{"Optimal Threshold Evaluation\nS_T2 > 0.6546"}
-        end
+    CloudKill -->|"alert, or kill in enforce mode"| Worker
+    Dispatch -.->|"Tier 2 unreachable"| Policy["Grey-zone queue: after 30s\nfail-open (default) or fail-closed"]
 
-        subgraph CloudDecisions["7. Cloud Verdict & Attribution"]
-            T2Eval -->|"S_T2 <= 0.6546"| CloudAllow["Verdict: ALLOW\nLog as benign enterprise utility"]
-            T2Eval -->|"S_T2 > 0.6546"| CloudKill["Verdict: KILL\n99.26% Precision Guarantee"]
-            CloudKill --> XAI["Integrated Gradients (XAI)\nAttribute Top Suspicious Features"]
-            CloudKill --> CloudRemediation["Dispatch Terminate Directive\nBack to Endpoint Agent"]
-        end
+    subgraph UI["DASHBOARDS"]
+        Log["agent.log"] --> Dash["Streamlit dashboard / web_app.py"]
     end
-
-    subgraph SOC["ENTERPRISE SOC COMMAND CENTER"]
-        CloudRemediation -.-> Telemetry["Real-Time SOC Dashboard\n(FastAPI WebSockets / Streamlit)"]
-        XAI -.-> Telemetry
-        EdgeDecisions -.-> Telemetry
-        Telemetry --> Analyst["Analyst Remediation Cockpit\n(Quarantine, C2 IP Block, Host Sever)"]
-    end
-
-    CloudRemediation -->|"Kill Directive"| Worker
 ```
 
 ### 3.2 End-to-End Telemetry & Remediation Flow
 
-1. **Kernel Interception:** A new process launch triggers a Windows WMI event (`Win32_ProcessStartTrace`). A non-blocking thread pool worker extracts the PID, image path, parent PID, and command line.
-2. **Level 1 Fast-Path:**
-   - **L1A (WinTrust):** Calls the native Win32 `WinVerifyTrust` API (`wintrust.dll`). Valid signatures chaining to trusted root authorities (Microsoft, Google, Adobe) are cached in an in-memory LRU cache keyed by `(filepath, st_mtime, st_size)`. Modifying the binary invalidates the cache instantly.
-   - **L1B (SQLite Hash Whitelist):** Unsigned internal enterprise software is matched against `whitelist.db` in $<0.2\text{ms}$.
-3. **Dynamic 30-Second Behavioral Window:** Untrusted binaries enter the `BehaviorMonitor`. Circular ring buffers aggregate system calls, file replacements, registry modifications, and outbound sockets.
-4. **Tier 1 ONNX Edge Evaluation:** Evaluates 99 continuous behavioral features in $<1.8\text{ms}$.
-5. **Asymmetric Escalation:** Ambiguous processes ($0.10 < \text{Score} < 0.90$) are dispatched to Cloud Tier 2.
-6. **Cloud ResNet Reasoning:** Deep residual blocks resolve feature conjunctions. If score exceeds $\Theta = 0.6546$, a kill directive is returned and Integrated Gradients XAI feature attributions are streamed to the SOC.
+1. **Process start:** WMI `Win32_ProcessStartTrace` reports the PID and name. A worker thread
+   resolves the real exe path with `psutil`; nothing is suspended.
+2. **Trust checks:**
+   - A critical OS process name is skipped only if its exe really lives in System32, SysWOW64,
+     WinSxS or `%SystemRoot%` (not their user-writable subfolders). A masquerading name is analyzed.
+   - Shells, script hosts and LOLBins (`ALWAYS_WATCH`) are always monitored, signed or not.
+   - Otherwise: fingerprint cache `(path, mtime_ns, size)` → `WinVerifyTrust` plus a publisher
+     allow-list (exact `O=` match) → protected Windows folder (catalog-signed OS binaries) →
+     SHA-256 lookup in `whitelist.db`.
+3. **Behavior window:** the Rust sensor attributes Sysmon events by `ProcessGuid` and keeps each
+   process's earliest 50 events plus its creation event. No vector exists until a process has
+   3 events, so "no data" is never scored as benign.
+4. **Tier 1:** every 2 s the current vector is scored; the verdict uses the highest score seen.
+   The window ends at 30 s, or as soon as 50 events are buffered. Processes that exit mid-window,
+   or before triage, still get a verdict from their buffered events.
+5. **Escalation:** grey-zone processes are POSTed to `/score`. If Tier 2 is unreachable they wait
+   in a queue; after 30 s `NETWORK_FAIL_POLICY` applies (`OPEN` by default: left running, logged).
+6. **Tier 2:** returns `KILL` when $S_{T2} \ge 0.6546$, otherwise `BENIGN`. The agent alerts, or
+   kills in enforce mode after checking the PID was not reused.
 
 ---
 
@@ -186,59 +198,61 @@ flowchart TB
 
 ### 4.1 Multi-Stage Gating Protocol
 
-| Stage | Decision Engine | Condition / Rule | Action Taken | Latency | Bandwidth Cost |
-|---|---|---|---|---|---|
-| **L1A** | WinTrust Authenticode | Valid Vendor Certificate Root | **Instant Allow** (LRU Cached) | $0.0\text{ms}$ | Zero |
-| **L1B** | SQLite B-Tree Hash | Match in `trusted_hashes` | **Instant Allow** (Internal Tool) | $<0.2\text{ms}$ | Zero |
-| **Tier 1** | Edge ONNX MLP | $S_{T1} \le 0.10$ | **Local Allow** ($0.00\%$ FNR) | $<1.8\text{ms}$ | Zero |
-| **Tier 1** | Edge ONNX MLP | $S_{T1} \ge 0.90$ | **Local Kill** (Win32 API) | $<2.0\text{ms}$ | Zero |
-| **Tier 1 $\rightarrow$ 2** | Escalation Queue | $0.10 < S_{T1} < 0.90$ | **Escalate to Cloud Tier 2** | $\sim 12\text{ms}$ (HTTP) | $\sim 1.2\text{ KB}$ Payload |
-| **Tier 2** | Cloud ResNet | $S_{T2} \le 0.6546$ | **Cloud Allow** | $2.4\text{ms}$ (GPU/CPU) | Internal Log |
-| **Tier 2** | Cloud ResNet | $S_{T2} > 0.6546$ | **Cloud Kill + XAI Attribution** | $2.4\text{ms}$ + XAI | Real-Time SOC Alert |
+| Stage | Decision | Condition | Action |
+|---|---|---|---|
+| **Skip** | Critical OS process | Name in safelist **and** exe in a protected path | Skipped |
+| **Watch** | `ALWAYS_WATCH` | Shell, script host or LOLBin | Always behavior-monitored |
+| **Trust** | Fingerprint cache | `(path, mtime_ns, size)` verified before | Allowed |
+| **Trust** | `WinVerifyTrust` | Valid signature from an allow-listed publisher | Allowed, cached |
+| **Trust** | Protected path | Exe in System32 / SysWOW64 / WinSxS / `%SystemRoot%` | Allowed, cached |
+| **Trust** | SQLite whitelist | SHA-256 in `trusted_hashes` | Allowed, cached |
+| **Tier 1** | ONNX MLP | max $S_{T1} \le 0.10$ | Benign |
+| **Tier 1** | ONNX MLP | $S_{T1} \ge 0.90$ | Threat: alert, or kill in enforce mode |
+| **Tier 1 $\rightarrow$ 2** | HTTP POST `/score` | $0.10 < S_{T1} < 0.90$ | Escalate to Tier 2 |
+| **Tier 2** | Residual MLP | $S_{T2} < 0.6546$ | Benign |
+| **Tier 2** | Residual MLP | $S_{T2} \ge 0.6546$ | Threat: alert, or kill in enforce mode |
+| **Fallback** | Grey-zone queue | No Tier-2 answer within 30 s | `OPEN`: left running (default); `CLOSED`: kill |
+
+One Tier-1 inference takes about 0.03 ms (onnxruntime on CPU, measured locally).
 
 ### 4.2 Process Lifecycle Sequence Flowchart
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor OS as Windows OS (Process Launch)
-    participant EDR as agent.py (Endpoint Agent)
-    participant Cache as LRU / SQLite Whitelist
-    participant T1 as Tier 1 ONNX (<1.8ms)
-    participant Cloud as server.py (Tier 2 Cloud)
-    participant SOC as Real-Time SOC Console
+    actor OS as Windows (process start)
+    participant EDR as agent.py
+    participant Trust as Trust checks
+    participant S as edr_sensor (Sysmon)
+    participant T1 as Tier 1 ONNX
+    participant Cloud as server.py (Tier 2)
+    participant Log as agent.log
 
-    OS->>EDR: Process Created (e.g., cmd.exe, malware.exe)
-    EDR->>Cache: Inspect WinTrust Authenticode & SHA-256 Hash
-    alt Binary is Authenticode Signed / Whitelisted
-        Cache-->>EDR: Verified Legitimate Binary
-        EDR->>SOC: ALLOWED (Level 1 Fast-Path, 0.0ms Overhead)
-    else Binary is Unknown or Unsigned
-        Cache-->>EDR: Untrusted Binary
-        EDR->>EDR: Monitor sliding execution window (up to 30s)
-        EDR->>EDR: Synthesize 99 Behavioral Feature Vector
-        EDR->>T1: Run ONNX Inference
-        T1-->>EDR: Return Suspicion Score S_T1 [0.00 - 1.00]
-        
-        alt S_T1 <= 0.10 (Clear Benign)
-            EDR->>SOC: ALLOWED (Tier 1 Edge Verdict, S_T1 <= 0.10)
-        else S_T1 >= 0.90 (Clear Malware)
-            EDR->>OS: TerminateProcess(PID) in <2ms
-            EDR->>SOC: LOCAL KILL (Tier 1 High-Confidence Malware)
-        else 0.10 < S_T1 < 0.90 (Ambiguous Grey Zone)
-            EDR->>SOC: [GREY ZONE] Escalating to Cloud Tier 2
-            EDR->>Cloud: POST /score {process_name, S_T1, features[99]}
-            Cloud->>Cloud: Run Tier 2 Deep Behavioral ResNet
-            Cloud->>Cloud: Evaluate Optimal Threshold (Theta = 0.6546)
-            alt S_T2 > 0.6546
-                Cloud->>Cloud: Compute Integrated Gradients XAI Attributions
-                Cloud-->>EDR: {"verdict": "KILL", "confidence": 0.94, "xai": {...}}
-                EDR->>OS: TerminateProcess(PID)
-                EDR->>SOC: CLOUD KILL (Enforced by Tier 2 Cloud Brain)
-                Cloud->>SOC: Stream XAI Attribution Vector
-            else S_T2 <= 0.6546
-                Cloud-->>EDR: {"verdict": "ALLOW", "confidence": 0.28}
-                EDR->>SOC: CLOUD ALLOW (Classified as Legitimate Admin Utility)
+    OS->>EDR: WMI Win32_ProcessStartTrace (PID, name)
+    EDR->>Trust: Critical path? Always-watch? Cache, signature, whitelist?
+    alt Trusted
+        Trust-->>EDR: Allowed
+        EDR->>Log: TRUSTED / ALLOWED
+    else Unknown or always-watched
+        loop every 2 s, up to 30 s (5 min if dormant)
+            EDR->>S: features(pid)
+            S-->>EDR: 99 features, or None while fewer than 3 events
+            EDR->>T1: score
+            T1-->>EDR: S_T1
+        end
+        alt S_T1 >= 0.90
+            EDR->>OS: kill (enforce mode only)
+            EDR->>Log: THREAT
+        else max S_T1 <= 0.10
+            EDR->>Log: BENIGN
+        else grey zone
+            EDR->>Cloud: POST /score {process_name, tier1_score, features[99]}
+            Cloud-->>EDR: {"verdict": "KILL" or "BENIGN", "confidence": S_T2}
+            alt KILL
+                EDR->>OS: kill (enforce mode only)
+                EDR->>Log: CLOUD VERDICT THREAT
+            else BENIGN
+                EDR->>Log: CLOUD VERDICT ALLOWED
             end
         end
     end
@@ -264,128 +278,70 @@ $$\text{Theoretical Accuracy Ceiling}_{\text{Token-Only}} = 90.03\%$$
 
 ### 5.2 Behavioral Feature Matrix (All 99 Features)
 
+The exact names and order are in
+[`dataset/behavioral_dataset_meta.json`](dataset/behavioral_dataset_meta.json).
+[`build_behavioral_dataset.py`](build_behavioral_dataset.py) computes them for training and
+[`edr_sensor/src/features.rs`](edr_sensor/src/features.rs) computes them live. No raw path, image
+name or username reaches the model, only flags, categories and log-scaled counts; usernames are
+sanitized before any path rule runs.
+
 ```
-Column Range | Category Description
------------------------------------------------------------------------------------------
-Cols 0 - 22  | Category A: Sysmon EventID Frequencies, Ratios & Operation Densities
-Cols 23 - 30 | Category B: Temporal Execution Dynamics, Burst Ratios & Base64 Detection
-Cols 31 - 50 | Category C: Filesystem Path Heuristics & Ransomware Anomaly Scoring
-Cols 51 - 75 | Category D: Registry Persistence & Configuration Tampering Indicators
-Cols 76 - 98 | Category E: Process Tree Hierarchy, Parent-Child Mismatches & Injection
+Cols 0 - 24  | Event mix: count of each Sysmon EventID 1-23, window fill, creation event seen
+Cols 25 - 33 | Command line: length, base64, PowerShell bypass, download, obfuscation, persistence, destructive
+Cols 34 - 43 | Launch location & name: temp / user-writable / Downloads / AppData, wrong-path system binary
+Cols 44 - 72 | Lineage: process & parent category, risky parent-child pairs, missing parent, integrity level
+Cols 73 - 93 | Activity: network, file, registry, DNS, image loads, process access
+Cols 94 - 98 | Timing: duration, gaps between events, share of bursts
 ```
 
 <details>
-<summary><b>Click to expand the complete 99-feature engineering specification</b></summary>
+<summary><b>Click to expand the complete 99-feature list</b></summary>
 
-#### Category A: Sysmon EventID Frequencies & Proportions (Cols 0–22)
-- `0`: EventID 1 (Process Create) absolute frequency count.
-- `1`: EventID 1 proportion relative to total window events.
-- `2`: EventID 2 (File Creation Time Changed - Timestomping indicator).
-- `3`: EventID 3 (Network Connection Initiated) absolute frequency count.
-- `4`: EventID 3 proportion (high ratio indicates C2 beaconing or exfiltration).
-- `5`: EventID 5 (Process Terminated) frequency count.
-- `6`: EventID 7 (Image / DLL Loaded) absolute frequency count.
-- `7`: EventID 7 proportion (burst indicates DLL injection or API unhooking).
-- `8`: EventID 8 (CreateRemoteThread - Classic code injection indicator).
-- `9`: EventID 9 (RawAccessRead - Direct disk reading, bypasses FS filters).
-- `10`: EventID 10 (ProcessAccess - OpenProcess with `PROCESS_ALL_ACCESS`, Mimikatz).
-- `11`: EventID 10 proportion.
-- `12`: EventID 11 (FileCreate) absolute frequency count.
-- `13`: EventID 11 proportion (high ratio indicates ransomware encrypting files).
-- `14`: EventID 12 (Registry Object Added or Deleted).
-- `15`: EventID 13 (Registry Value Set) absolute frequency count.
-- `16`: EventID 13 proportion (persistence via Run keys or startup services).
-- `17`: EventID 14 (Registry Object Renamed).
-- `18`: EventID 15 (FileCreateStreamHash - Alternate Data Streams, zone identifier removal).
-- `19`: EventID 17 (Pipe Event Created - Named pipe communication for C2).
-- `20`: EventID 18 (Pipe Event Connected).
-- `21`: EventID 22 (DNS Query Initiated) absolute count.
-- `22`: EventID 25 (Process Tampering - Process hollowing / thread manipulation).
+Categories used for the process and its parent: `none`, `office`, `shell`, `script_host`,
+`browser`, `system`, `lolbin`, `admin_tool`, `other`.
 
-#### Category B: Temporal Dynamics & Obfuscation (Cols 23–30)
-- `23`: Window Fraction (Duration of active execution / 30.0 seconds).
-- `24`: Burstiness Ratio (Peak events in 500ms window / Mean events per 500ms).
-- `25`: Event Velocity (Total events / Total elapsed milliseconds).
-- `26`: Command-line Length Indicator (1.0 if `len(cmdline) > 200`, else 0.0).
-- `27`: Base64 Encoded Payload Flag (1.0 if `-enc` / `-encodedcommand` detected, else 0.0).
-- `28`: Non-Standard Character Entropy (Shannon entropy of command line string).
-- `29`: Rapid Thread Creation Velocity (Threads spawned per second > 10).
-- `30`: Network-to-File Activity Ratio (`EventID 3 count / (EventID 11 count + 1)`).
+#### Event mix (cols 0–24)
+- `0–22`: `cnt_eid_1` … `cnt_eid_23` (count of each Sysmon EventID in the window)
+- `23`: `win_len_frac` (buffered events / 50)
+- `24`: `has_creation_row` (the process's EventID-1 event was seen)
 
-#### Category C: Filesystem Path Heuristics & Anomaly Scoring (Cols 31–50)
-- `31`: Executing from `AppData\Local\Temp` directory (1.0 or 0.0).
-- `32`: Executing from `AppData\Roaming` directory (1.0 or 0.0).
-- `33`: Executing from `C:\Users\Public` or World-Writable directory (1.0 or 0.0).
-- `34`: Executing from `C:\Windows\Temp` directory (1.0 or 0.0).
-- `35`: Executing from Removable / USB Media (1.0 or 0.0).
-- `36`: System Directory Target Count (File writes to System32 or SysWOW64).
-- `37`: Masquerading Distance (Levenshtein distance to legitimate system binaries: svchost, explorer).
-- `38`: Double File Extension Detected (e.g., `invoice.pdf.exe`).
-- `39`: Executable Missing Vendor Description in PE Header (1.0 or 0.0).
-- `40`: Executable Created in Last 60 Seconds (Drop-and-run detection).
-- `41`: Document Folder Modification Velocity (Writes to Desktop, Documents, Pictures per second).
-- `42`: Volume Shadow Copy Deletion Indicator (`vssadmin delete shadows` / `wmic shadowcopy`).
-- `43`: Backup Service Modification Count (Tampering with `wbadmin` or `bcdedit`).
-- `44`: Executable Section Entropy (Packed binary indicator > 7.2 Shannon entropy).
-- `45`: Hidden File Attribute Set on Creation (`attrib +h` indicator).
-- `46`: Execution from Recycle Bin directory.
-- `47`: File Replacement Velocity (Overwriting existing files without deletion).
-- `48`: High Extension Diversity (Creating `.locked`, `.crypto`, or randomized extensions).
-- `49`: Ransomware Note Pattern (Creation of `README_RESTORE_FILES.txt`, `DECRYPT_NOTE.txt`).
-- `50`: Execution from Alternate Data Stream (ADS).
+#### Command line (cols 25–33)
+- `25` `cmd_len_log`, `26` `cmd_len_gt_200`, `27` `has_base64`, `28` `has_powershell_bypass`,
+  `29` `has_http_download`, `30` `has_ps_obfuscation`, `31` `has_persistence_cmd`,
+  `32` `has_destructive_cmd`, `33` `cmd_has_temp_path`
 
-#### Category D: Registry Persistence & Tampering (Cols 51–75)
-- `51`: Run Key Persistence (`HKLM\...\CurrentVersion\Run` modification).
-- `52`: RunOnce Key Persistence (`HKLM\...\CurrentVersion\RunOnce` modification).
-- `53`: Startup Folder Registry Linkage.
-- `54`: Windows Service Creation / Modification (`Services\ServiceName\ImagePath`).
-- `55`: Scheduled Task Creation (`ITaskService` / `schtasks` modification).
-- `56`: Winlogon Shell Tampering (`HKLM\...\Winlogon\Shell` or `Userinit`).
-- `57`: `AppInit_DLLs` Registry Injection.
-- `58`: Image File Execution Options (IFEO debugger hijacking - Sticky Keys backdoor).
-- `59`: LSA Authentication Package Tampering (Cleartext password extraction hooks).
-- `60`: Security Providers Registry Modification.
-- `61`: Windows Defender Disablement Flag (`DisableRealtimeMonitoring = 1`).
-- `62`: Windows Defender Exclusion Path Added (`Exclusions\Paths` modification).
-- `63`: Firewall Rule Disablement (`EnableFirewall = 0`).
-- `64`: UAC Remote Restriction Bypass (`LocalAccountTokenFilterPolicy = 1`).
-- `65`: Terminal Server RDP Enablement (`fDenyTSConnections = 0`).
-- `66`: SafeBoot Minimal / Network Modification (Bypassing AV via Safe Mode).
-- `67`: ScreenSaver Malicious Binary Linkage (`scrnsave.exe` hijacking).
-- `68`: `COR_PROFILER` .NET Hijacking.
-- `69`: PowerShell Script Block Logging Disablement (`EnableScriptBlockLogging = 0`).
-- `70`: Event Viewer Log Clearing Indicator (`wevtutil cl System/Security`).
-- `71`: Cryptographic Provider Registry Modification.
-- `72`: Active Setup Key Hijacking.
-- `73`: Browser Helper Object (BHO) Registry Insertion.
-- `74`: Shell Icon Overlay Handler DLL Hijacking.
-- `75`: Total Registry Modification Velocity (Writes per second).
+#### Launch location & name (cols 34–43)
+- `34` `is_executing_from_temp`, `35` `is_from_user_writable`, `36` `is_from_downloads`,
+  `37` `is_from_appdata`, `38` `is_system_binary_wrong_path`, `39` `has_double_extension`,
+  `40` `ext_tmp`, `41` `ext_scr_com`, `42` `name_entropy`, `43` `name_digit_ratio`
 
-#### Category E: Process Tree Hierarchy & Injection (Cols 76–98)
-- `76`: Process Tree Depth (Depth in process hierarchy $\ge 4$).
-- `77`: Orphan Process Flag (Parent PID no longer exists or re-parented to root).
-- `78`: Living-off-the-Land Binary (LOLBin) Flag (`certutil`, `bitsadmin`, `mshta`, `regsvr32`).
-- `79`: Office Spawning Shell Flag (`WINWORD.EXE` / `EXCEL.EXE` spawning `cmd.exe` or `powershell.exe`).
-- `80`: Web Browser Spawning Shell Flag (`chrome.exe` spawning `cmd.exe`).
-- `81`: WMI Provider Host Spawning Shell (`WmiPrvSE.exe` spawning `powershell.exe`).
-- `82`: Parent-Child User Identity Mismatch (Elevated process spawned from standard user).
-- `83`: Process Integrity Level Elevation (Token elevation to `SYSTEM`).
-- `84`: Non-Standard Outbound Port Connection (Port $\ne$ 80, 443, 53, 8080).
-- `85`: Direct IP Connection without Prior DNS Query (Hardcoded C2 IP address).
-- `86`: External Socket Velocity (Connections per second > 5).
-- `87`: Rapid Image / DLL Load Burst (> 30 DLLs loaded within 100ms).
-- `88`: Unsigned DLL Loaded into Signed Process (DLL sideloading).
-- `89`: DLL Loaded from Temp or User Directory (`C:\Users\...\AppData`).
-- `90`: Ntdll Unhooking Indicator (Direct syscall stubs detected).
-- `91`: Process Memory Scraping Indicator (`VirtualAllocEx` + `WriteProcessMemory`).
-- `92`: Cobalt Strike Beacon Signature (Reflective DLL loader artifact).
-- `93`: LSASS Process Access Indicator (`lsass.exe` handle opened with `PROCESS_VM_READ`).
-- `94`: SAM Database Direct Read Indicator.
-- `95`: Token Impersonation Flag (`DuplicateTokenEx` invoked).
-- `96`: Named Pipe Impersonation Flag.
-- `97`: Process Lifetime < 2.0 Seconds (Fast ephemeral dropper).
-- `98`: High Memory Allocation Anomaly (`VirtualAlloc` > 100 MB requested).
+#### Lineage (cols 44–72)
+- `44–52`: `child_<category>` (one-hot category of the process itself)
+- `53–61`: `parent_<category>` (one-hot category of its parent)
+- `62` `office_spawns_exec`, `63` `browser_spawns_exec`, `64` `shell_spawns_shell`,
+  `65` `system_spawns_exec`, `66` `parent_missing`, `67` `parent_in_user_writable`
+- `68–72`: `integ_system`, `integ_high`, `integ_medium`, `integ_low`, `integ_unknown`
+
+#### Activity (cols 73–93)
+- Network: `73` `net_cnt_log`, `74` `net_frac_external`, `75` `net_unique_dst_log`,
+  `76` `net_has_susp_port`, `77` `net_only_web_ports`, `78` `net_frac_high_port`
+- File: `79` `file_cnt_log`, `80` `file_frac_temp`, `81` `file_exec_drops_log`
+- Registry: `82` `reg_cnt_log`, `83` `reg_runkey_log`
+- DNS: `84` `dns_cnt_log`, `85` `dns_max_len_log`, `86` `dns_has_long_name`, `87` `dns_unique_log`
+- Image loads: `88` `img_cnt_log`, `89` `img_frac_unsigned`, `90` `img_frac_invalid_sig`,
+  `91` `img_userwritable_log`
+- Process access: `92` `pa_cnt_log`, `93` `pa_high_access_log`
+
+#### Timing (cols 94–98)
+- `94` `dur_log`, `95` `med_delta_log`, `96` `min_delta_log`, `97` `mean_delta_log`,
+  `98` `frac_burst_50ms`
 </details>
+
+> **Live note:** the Sysmon config in [`edr_sensor/live/sysmon_edr.xml`](edr_sensor/live/sysmon_edr.xml)
+> turns off ImageLoad (7), CreateRemoteThread (8), RawAccessRead (9), ProcessAccess (10) and
+> FileDelete (23). They were nearly absent from the training data and image loads are very noisy.
+> As a result 11 features (`cnt_eid_7`–`cnt_eid_10`, `cnt_eid_23`, `img_*`, `pa_*`) are always
+> zero on live machines.
 
 ---
 
@@ -408,13 +364,15 @@ graph LR
     Drop2 --> OutL["Linear Head\n(64 -> 1 Logit)"]
     OutL --> Sigmoid["Sigmoid Function\n(Probability [0, 1])"]
     
-    Sigmoid --> Output["Edge Score S_T1\nInference: < 1.8ms\nArtifact Size: 10.8 KB ONNX"]
+    Sigmoid --> Output["Edge Score S_T1\n~21K parameters\nONNX: 11 KB graph + 84 KB weights"]
 ```
 
 #### Why MLP for Tier 1?
-1. **Deterministic Sub-Millisecond Speed:** Evaluates in **1.4ms to 1.8ms** on a single workstation CPU core via ONNX Runtime CPU Execution Provider.
-2. **Tiny Cache Footprint:** The compiled artifact is **10.8 KB**, fitting directly into CPU L2/L3 cache without triggering DRAM latency.
-3. **Strict Memory Budget:** Consumes **<138.4 MB Resident Memory (RSS)** and **0.0% idle CPU**, preserving laptop battery life.
+1. **Cheap:** 21,505 parameters, about 21K multiply-adds per inference. One call takes about
+   0.03 ms with onnxruntime on CPU (measured locally, one vector, Python overhead included).
+2. **Small:** the ONNX graph is 11 KB; its weights live in `tier1_behavioral.onnx.data` (84 KB).
+3. **Light agent:** the agent's watchdog warns above 150 MB RSS and restarts it above 300 MB. In
+   the live test the agent used about 85 MB RAM and ~3.7% of one core while idle.
 
 ---
 
@@ -430,9 +388,10 @@ graph TD
         Act0 --> RB1_L1["Linear(64 -> 64)"]
         RB1_L1 --> RB1_BN1["BatchNorm1d"]
         RB1_BN1 --> RB1_Act1["ReLU"]
-        RB1_Act1 --> RB1_L2["Linear(64 -> 64)"]
+        RB1_Act1 --> RB1_Drop["Dropout (0.40)"]
+        RB1_Drop --> RB1_L2["Linear(64 -> 64)"]
         RB1_L2 --> RB1_BN2["BatchNorm1d"]
-        
+
         Act0 -.->|"Skip Connection (Identity)"| RB1_Add["Element-wise Sum (+)"]
         RB1_BN2 --> RB1_Add
         RB1_Add --> RB1_Out["ReLU Output"]
@@ -442,47 +401,60 @@ graph TD
         RB1_Out --> RB2_L1["Linear(64 -> 64)"]
         RB2_L1 --> RB2_BN1["BatchNorm1d"]
         RB2_BN1 --> RB2_Act1["ReLU"]
-        RB2_Act1 --> RB2_L2["Linear(64 -> 64)"]
+        RB2_Act1 --> RB2_Drop["Dropout (0.40)"]
+        RB2_Drop --> RB2_L2["Linear(64 -> 64)"]
         RB2_L2 --> RB2_BN2["BatchNorm1d"]
-        
+
         RB1_Out -.->|"Skip Connection (Identity)"| RB2_Add["Element-wise Sum (+)"]
         RB2_BN2 --> RB2_Add
         RB2_Add --> RB2_Out["ReLU Output"]
     end
 
     subgraph Head["Classification Head"]
-        RB2_Out --> ClassL["Linear(64 -> 1)"]
+        RB2_Out --> HeadDrop["Dropout (0.40)"]
+        HeadDrop --> ClassL["Linear(64 -> 1)"]
         ClassL --> Sig["Sigmoid"]
-        Sig --> FinalVerdict["Cloud Suspicion Score S_T2\nOptimal Theta: 0.6546\nAccuracy: 97.03%\nAUC: 0.9967"]
+        Sig --> FinalVerdict["Tier-2 Score S_T2\nThreshold: 0.6546\nCV accuracy 96.35%, AUC 0.9957"]
     end
 ```
 
-#### Why Residual Network for Tabular Behavioral Features?
-In cyber behavioral telemetry, advanced evasions are formed by non-linear feature conjunctions (e.g., executing from `Temp` **AND** command line contains `Base64` **AND** rapid burst of `DLL loads`).
+About 23,700 parameters (`tier2_behavioral.pt`).
 
-Standard feedforward networks suffer from vanishing gradients when modeled deeply enough to capture these higher-order relationships. The identity skip connections allow gradient propagation through deep feature interactions while BatchNorm1d normalizes each feature independently across the batch, stabilizing training.
+#### Why Residual Network for Tabular Behavioral Features?
+In behavioral telemetry, evasive activity often shows up as feature conjunctions (e.g., executing
+from `Temp` **AND** a Base64 command line **AND** a burst of child processes). Residual blocks let
+the network model these interactions in depth without vanishing gradients, and BatchNorm1d
+normalizes each feature independently across the batch, which suits heterogeneous tabular inputs.
+
+In cross-validation Tier 2 does not outperform Tier 1 (section 7.2); in the pipeline it acts as a
+second model with its own FPR-bounded threshold for the grey-zone cases.
 
 ---
 
 ### 6.3 Loss Function & Operating Threshold Derivation ($\Theta = 0.6546$)
 
 #### 1. Focal Loss Optimization
-To force the model to focus on hard, borderline edge cases rather than easy benign samples, both models were trained using Focal Loss:
+Both models are trained with focal loss so that hard, borderline examples dominate the gradient:
 
-$$\mathcal{L}_{\text{Focal}}(p_t) = -\alpha_t (1 - p_t)^\gamma \log(p_t)$$
+$$\mathcal{L}_{\text{Focal}}(p_t) = -(1 - p_t)^\gamma \log(p_t)$$
 
-where $\gamma = 2.0$ downweights easy examples and $\alpha_t = 0.25$ balances precision.
+with $\gamma = 2.0$ and no $\alpha$ class weighting (the training set is balanced, 735 : 735).
+Optimizer: AdamW, early stopping on validation loss.
 
 #### 2. Operating Threshold Derivation ($\Theta = 0.6546$)
-In an enterprise environment, a false positive (killing a legitimate business build or admin script) causes costly downtime. Rather than using an arbitrary $0.50$ cutoff, we performed empirical ROC curve optimization to bound the False Positive Rate strictly below 1.0%:
+A false positive (killing a legitimate build or admin script) is costly, so instead of a 0.50
+cutoff each validation fold picks the threshold with the highest TPR while FPR stays below 1%:
 
 $$\Theta^* = \arg\max_\Theta \text{TPR}(\Theta) \quad \text{subject to} \quad \text{FPR}(\Theta) < 0.010$$
 
-Across all 25 cross-validation folds, the mean optimal threshold converged to:
+The production threshold is the mean over all 25 folds:
 
 $$\mathbf{\Theta = 0.654614}$$
 
-At this operating point, Tier 2 achieves **99.26% Precision**, guaranteeing enterprise business continuity.
+Because each fold's threshold is tuned on the data it is scored on, the cross-validation figures
+are optimistic. On the separate hold-out (section 14) the calibrated threshold was 0.689.
+
+Tier 1's 0.10 / 0.90 bands are fixed design choices, not derived from data.
 
 ---
 
@@ -495,69 +467,71 @@ At this operating point, Tier 2 achieves **99.26% Precision**, guaranteeing ente
 ```mermaid
 flowchart TD
     subgraph RawData["Raw Telemetry & Sanitization"]
-        R1["Raw Splunk Sysmon Logs\n(Benign vs Red-Team Malware)"] --> S1["Filter Splunk Ingestion Artifacts\n(splunk.exe, splunkd.exe removed)"]
-        S1 --> S2["Sanitize Dynamic Volatilities\n(Usernames, GUID paths, Random PIDs)"]
+        R1["LMD-2023 Sysmon dataset\n(labelled benign / malware events)"] --> S1["Drop Splunk forwarder processes\n(414, all labelled malware)"]
+        S1 --> S2["Sanitize usernames in paths\nOrder events by SystemTime"]
     end
 
     subgraph FeatureEngineering["Behavioral Feature Synthesis"]
-        S2 --> F1["99 Engineered Structural Features"]
-        F1 --> M1["Balanced Dataset: 1,470 Process Traces\n(735 Benign : 735 Malware)"]
+        S2 --> F1["First 50 events per ProcessGuid\n-> 99 features"]
+        F1 --> M1["Balanced Dataset: 1,470 processes\n(735 benign : 735 malware)"]
     end
 
-    subgraph GroupSplitting["Scientific Leak-Free Validation"]
-        M1 --> G1{"GroupKFold Splitter\n(5 Folds x 5 Seeds = 25 Folds)"}
-        G1 -->|"Grouped Strictly by ProcessGuid"| TR["Training Folds (80%)"]
-        G1 -->|"Grouped Strictly by ProcessGuid"| VA["Validation Folds (20%)"]
-        
-        note1["CRITICAL: In Windows, parent & child share paths.\nEnforcing GroupKFold by ProcessGuid guarantees an entire\nprocess tree belongs exclusively to Train OR Test.\nEliminates artificial 99.9% accuracy inflation."]
-        G1 -.-> note1
+    subgraph GroupSplitting["Validation"]
+        M1 --> G1{"GroupKFold\n(5 folds x 5 seeds = 25 runs)"}
+        G1 -->|"Grouped by ProcessGuid"| TR["Training folds (80%)"]
+        G1 -->|"Grouped by ProcessGuid"| VA["Validation folds (20%)"]
     end
 
-    subgraph Training["Dual-Model Training Pipeline"]
-        TR --> T1Train["Train Tier 1 Behavioral MLP\n(Focal Loss, Early Stopping)"]
-        TR --> T2Train["Train Tier 2 Behavioral ResNet\n(BatchNorm1d, Residual Blocks)"]
+    subgraph Training["Dual-Model Training"]
+        TR --> T1Train["Tier 1 MLP\n(Focal loss, early stopping)"]
+        TR --> T2Train["Tier 2 Residual MLP\n(BatchNorm1d, residual blocks)"]
     end
 ```
 
-#### The Data Leakage Trap:
-In Windows, parent and child processes share image paths and command-line templates. If standard random train/test splits are used, parent processes land in the training set and child processes in the test set. The model simply memorizes executable paths, showing an artificial 99.9% accuracy that collapses to under 60% on unseen zero-day malware.
+#### What the split does and doesn't protect against
+The main leakage fixes are in the dataset: the Splunk forwarder (a lab monitoring agent labelled
+as malware) is dropped, and raw paths and usernames never become features, so the model cannot
+memorize them.
 
-To ensure genuine out-of-sample generalization, our validation enforces **Strict GroupKFold grouped on `ProcessGuid`** across 5 distinct random seeds (Seeds: 42, 7, 123, 456, 789, 2024), totaling 25 distinct training runs.
+Each sample is one process, identified by its `ProcessGuid`, and all 1,470 GUIDs are unique. So
+GroupKFold here behaves like a plain 5-fold split: it stops one process landing on both sides, but
+it does **not** keep a parent and its children, or repeated runs of the same binary, together.
+Related processes can sit on both sides, which is one more reason the cross-validation figures
+are optimistic. The 25 runs use seeds 42, 7, 13, 99 and 2024.
 
 ---
 
 ### 7.2 Benchmark Performance Matrix
 
-| Evaluation Metric | Tier 1 Edge ONNX | Tier 2 Cloud ResNet | Combined Pipeline | Target SLA | Outcome |
-|---|---|---|---|---|---|
-| **Mean Accuracy (5-Seed Avg)** | $95.84\% \pm 0.92\%$ | **$97.03\% \pm 0.65\%$** | **$98.12\%$** | $> 95.0\%$ | **PASS** |
-| **ROC AUC Score** | $0.9892 \pm 0.005$ | **$0.9967 \pm 0.003$** | **$0.9981$** | $> 0.980$ | **PASS** |
-| **Precision (at FPR < 1.0%)** | $96.40\%$ | **$99.26\%$** | **$99.45\%$** | $> 98.0\%$ | **PASS** |
-| **Mean True Positive Rate (TPR)** | $94.59\%$ | **$93.35\%$** | **$95.10\%$** | $> 90.0\%$ | **PASS** |
-| **Mean False Positive Rate (FPR)** | $0.49\%$ | **$0.60\%$** | **$0.41\%$** | $< 1.0\%$ | **PASS** |
-| **SOC False Alarm Reduction** | — | — | **$99.51\%$** | $> 90.0\%$ | **PASS** |
-| **Inference Latency** | **$< 1.8\text{ms}$** | $2.4\text{ms}$ ($12.4\text{ms}$ HTTP) | **$< 2.0\text{ms}$ (90% events)** | $< 10.0\text{ms}$ | **PASS** |
-| **Network Egress Savings** | — | — | **$95.0\%$ Bandwidth Saved** | $> 80.0\%$ | **PASS** |
+Cross-validation, 25 runs (5 seeds × 5 folds), mean ± std. Source:
+[`tier1_behavioral_metrics.json`](tier1_behavioral_metrics.json),
+[`tier2_behavioral_metrics.json`](tier2_behavioral_metrics.json).
+
+| Metric | Tier 1 MLP | Tier 2 Residual MLP |
+|---|---|---|
+| **Accuracy** | $97.03\% \pm 1.76\%$ | $96.35\% \pm 2.25\%$ |
+| **ROC AUC** | $0.9967 \pm 0.0033$ | $0.9957 \pm 0.0038$ |
+| **True Positive Rate** | $94.59\% \pm 3.42\%$ | $93.35\% \pm 4.32\%$ |
+| **False Positive Rate** | $0.49\% \pm 0.31\%$ | $0.60\% \pm 0.22\%$ |
+| **Precision** (pooled over folds) | $99.48\%$ | $99.36\%$ |
+
+Each fold uses its own threshold (highest TPR at FPR < 1% on that fold), so treat these as upper
+bounds. The agent itself uses fixed 0.10 / 0.90 bands for Tier 1 and the averaged 0.6546 for
+Tier 2. Cross-validation gives no combined-pipeline figure; the two-tier result on the hold-out
+set is **TPR 92.1%, FPR 2.8%** (section 14).
 
 ---
 
 ### 7.3 Hardware Feasibility & Edge Footprint
 
-Measured empirically on standard workstation hardware via `psutil`:
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        TIER 1 HARDWARE TELEMETRY                       │
-├─────────────────────────┬─────────────────┬──────────────┬─────────────┤
-│ Metric                  │ Measured Value  │ Budget / SLA │ Status      │
-├─────────────────────────┼─────────────────┼──────────────┼─────────────┤
-│ ONNX Model Size         │ 10.8 KB         │ < 1.0 MB     │ PASS (99x)  │
-│ Single-Core CPU Latency │ 1.4 - 1.8 ms    │ < 10.0 ms    │ PASS (6x)   │
-│ Resident Memory (RSS)   │ 138.4 MB        │ < 150.0 MB   │ PASS        │
-│ Idle CPU Drain          │ 0.0%            │ < 1.0%       │ PASS        │
-│ FLOPs per Evaluation    │ < 25,000        │ < 1,000,000  │ PASS        │
-└─────────────────────────┴─────────────────┴──────────────┴─────────────┘
-```
+| Metric | Value | Source |
+|---|---|---|
+| Tier 1 parameters | 21,505 | `tier1_behavioral.pt` |
+| Multiply-adds per inference | ~21K | 99·128 + 128·64 + 64 |
+| ONNX files | 11 KB graph + 84 KB weights | `tier1_behavioral.onnx`, `.onnx.data` |
+| Tier 1 inference | ~0.03 ms per call | onnxruntime CPU, local benchmark |
+| Agent memory budget | warn > 150 MB, restart > 300 MB | `ResourceWatchdog` in `agent.py` |
+| Agent in live test | ~85 MB RAM, ~3.7% of one core idle | live test run |
 
 ---
 
@@ -575,28 +549,39 @@ timeline
     Phase 2 : Data Leakage Discovery
             : Random Train/Test split leaked parent/child processes
             : Metric inflation (false 99.9% accuracy)
-            : Solution: Enforced strict 5-Seed GroupKFold by ProcessGuid
-    Phase 3 : WinTrust OS API Thread Deadlocks
-            : WinVerifyTrust C-types calls hung threads on locked files
-            : Solution: Worker Thread Pool with 1.5s Watchdog Timeout
+            : Solution: dropped Splunk processes, removed paths and usernames from features, GroupKFold by ProcessGuid
+    Phase 3 : Signature Checks via PowerShell
+            : Every signature check spawned a PowerShell process
+            : Solution: native WinVerifyTrust via ctypes, revocation checks off
     Phase 4 : Catastrophic Collapse on Fold 5 (Seed 2024)
             : LayerNorm destroyed tabular feature semantics (AUC collapsed to 0.50)
             : Solution: Replaced LayerNorm with BatchNorm1d
-            : Reduced Projection Dim to 64; 100% convergence restored (0.995+ AUC)
-    Phase 5 : Production Two-Tier Deployment
-            : 99 continuous behavioral features
-            : Tier 1 ONNX Edge (<1.8ms) + Tier 2 Cloud ResNet (99.26% Precision)
-            : 99.51% Alert Fatigue Reduction
+            : Reduced Projection Dim to 64; all 25 folds converge (mean AUC 0.996)
+    Phase 5 : Live Deployment
+            : Rust Sysmon sensor, 1470/1470 feature parity with training
+            : Alert-only default, hold-out TPR 92.1% at FPR 2.8%
 ```
 
-### 8.2 Problem 1: WinTrust OS API Thread Deadlocks
-- **Symptom:** When querying Windows Authenticode via `WinVerifyTrust`, API calls would hang if an installer locked the target binary with exclusive read/write access or if network CRL revocation lookups timed out.
-- **Applied Solution:** Authenticode checks were isolated into a dedicated worker thread pool with a **1.5-second watchdog timeout**. If the API fails to return within 1.5s, the query aborts, the binary is classified as untrusted, and it transitions immediately to behavioral inspection without freezing the agent.
+### 8.2 Problem 1: Signature Checks That Spawned PowerShell
+- **Symptom:** the first agent verified Authenticode signatures by starting PowerShell, one process
+  per new process. Every check was itself a new process to triage.
+- **Applied Solution (#14):** call `WinVerifyTrust` directly from `wintrust.dll` through ctypes,
+  with revocation checks off (`WTD_REVOKE_NONE`) so no network CRL lookups happen. Only an
+  allow-listed publisher (exact `O=` match on the leaf certificate) counts as trusted (#20), and
+  results are cached by `(path, mtime_ns, size)` in a bounded LRU (#17, #18).
+- **Still open:** the call has no timeout. A slow check on a large or locked file holds one of the
+  8 worker threads until it returns.
 
 ### 8.3 Problem 2: ProcessGuid Data Leakage Trap
-- **Symptom:** Naive train/test splits yielded a suspicious 99.9% accuracy that collapsed when tested on new malware families.
-- **Root Cause:** Parent and child processes shared paths. Random splitting placed parent processes in train and child processes in test.
-- **Applied Solution:** Every trace was indexed by `ProcessGuid`. Strict 5-Seed GroupKFold was enforced, ensuring that all related processes in a family exist exclusively in Train OR Validation.
+- **Symptom:** early naive splits gave a suspicious 99.9% accuracy that did not hold up on new
+  malware.
+- **Root Cause:** label shortcuts. The Splunk forwarder was labelled malware, and raw paths and
+  usernames let the model memorize where a sample came from.
+- **Applied Solution:** the dataset builder drops Splunk processes, never feeds raw strings to the
+  model and sanitizes usernames; folds are split with GroupKFold on `ProcessGuid`.
+- **What it doesn't fix:** a `ProcessGuid` identifies a single process, not a process tree, and
+  every sample has its own GUID, so related processes can still be split across folds. The
+  hold-out evaluation (section 14) is the better estimate.
 
 ### 8.4 Problem 3: Catastrophic Collapse on Fold 5 (Seed 2024)
 - **Symptom:** During Tier 2 training on Seed 2024 (Fold 5), validation AUC dropped to **0.5000** (random guessing), with the network predicting a constant zero logit.
@@ -605,37 +590,27 @@ timeline
   2. *Over-Parameterization:* A projection dimension of 128 created over 50,000 parameters for 1,470 samples, causing gradient instability and saddle point traps.
 - **Applied Solution:**
   1. Replaced LayerNorm with **BatchNorm1d** across all residual blocks (normalizing each feature independently across the batch).
-  2. Reduced projection dimension to **64**, cutting parameters to ~14,000.
-- **Result:** Retraining confirmed 100% convergence across all 25 folds with AUC exceeding 0.9950.
+  2. Reduced projection dimension to **64**, cutting parameters to ~23,700.
+- **Result:** all 25 folds converge after retraining, with mean AUC 0.9957.
 
 ---
 
 ## 9. Explainable AI (XAI) & Analyst Cockpit
 
-Black-box neural networks are unacceptable in security operations. When Tier 2 issues a `KILL` directive, it calculates **Integrated Gradients** across the 99 input features:
+**Status: planned, not implemented.** `server.py` returns only a verdict and scores; it does not
+compute feature attributions. The attribution report shown in the web console comes from the
+static file [`tier2_xai_sample.json`](tier2_xai_sample.json).
+
+The planned method is Integrated Gradients over the 99 inputs:
 
 $$\text{Attr}_i(x) = (x_i - x'_i) \times \int_{0}^{1} \frac{\partial S_{T2}(x' + \alpha(x - x'))}{\partial x_i} \, d\alpha$$
 
-where $x'$ is a baseline neutral feature vector and $\alpha$ interpolates the input.
+where $x'$ is a neutral baseline feature vector and $\alpha$ interpolates the input.
 
-```
-SAMPLE FORENSIC ATTRIBUTION REPORT (powershell_dropper.exe)
-----------------------------------------------------------------------
-Tier-2 Suspicion Score : 0.9412 [KILL DIRECTIVE]
-Operating Threshold    : 0.6546
-Top Suspicious Attribution Weights:
-  [+0.312] Feature 27: cmd_has_base64 (Encoded Base64 payload detected)
-  [+0.245] Feature 31: is_executing_from_temp (Launched from AppData\Local\Temp)
-  [+0.187] Feature 87: high_image_loads (48 DLLs loaded in 50ms burst)
-  [+0.141] Feature 84: non_standard_outbound_port (Connecting to port 4444)
-----------------------------------------------------------------------
-Remediation Action: Process Suspended -> Memory Severed -> Quarantined
-```
-
-### Analyst Cockpit Remediation Actions:
-- **Quarantine Process:** Suspends target PID, severs active threads, and moves the binary to an encrypted vault.
-- **Blacklist C2 IP:** Automatically provisions an outbound Windows Firewall drop rule blocking the remote IP.
-- **Sever Host Network:** Isolates the workstation from the enterprise subnet while maintaining the EDR management tunnel.
+### Analyst Cockpit Actions (simulated)
+The `web_app.py` console offers **Quarantine Process**, **Blacklist C2 IP** and **Isolate Host**.
+These are demo actions: they write log and audit entries but do not touch processes, the firewall
+or the network.
 
 ---
 
@@ -661,18 +636,30 @@ The framework provides two zero-refresh user interfaces:
 
 ## 11. Work Completed & Technical Deliverables
 
-- [x] **Kernel Process Interception Engine (`agent.py`):** WMI/ETW hooks, non-blocking thread pool worker dispatch, PID reuse protection, and critical process safelisting.
-- [x] **Zero-Cost Fast-Path Gating (`agent.py`):** L1A WinTrust Authenticode verification with LRU memory caching; L1B SQLite hash whitelist (`whitelist.db`) querying in $<0.2\text{ms}$.
-- [x] **Dynamic 30-Second Behavioral Window:** Continuous multi-threaded tracking of system calls, registry tampering, file velocity, and network sockets.
-- [x] **99-Feature Behavioral Matrix Synthesis:** Extraction of 99 structural invariants across 5 categories, overcoming the legacy token ceiling.
-- [x] **Tier 1 Edge ONNX Gatekeeper (`tier1_behavioral.onnx`):** 10.8 KB compiled model executing in $<1.8\text{ms}$ with $<138\text{MB}$ RAM and $0.0\%$ idle CPU.
-- [x] **Tier 2 Cloud Heavy Brain (`server.py`):** FastAPI asynchronous microservice hosting deep Residual Network (`tier2_behavioral.pt`) with BatchNorm1d and Focal Loss.
-- [x] **Optimal Operating Threshold Optimization:** Rigorous derivation of $\Theta = 0.6546$ bounding FPR strictly below $1.0\%$ with $99.26\%$ precision.
-- [x] **Leak-Free 5-Seed GroupKFold Cross-Validation:** Full 25-fold validation strictly grouped on `ProcessGuid`.
-- [x] **Explainable AI Engine:** Integrated Gradients feature attribution streaming to SOC.
-- [x] **Zero-Refresh Streamlit SOC Dashboard (`edr_soc_dashboard.py`):** Modular telemetry streaming via `@st.fragment(run_every="1s")`.
-- [x] **WebSocket Cyber Command Portal (`web_app.py`):** Port 5050 FastAPI portal with canvas gauges and interactive attack simulation.
-- [x] **Publication Suite:** interactive walkthrough website (`/how/`), public landing page (`site/`), and publication diagrams.
+- [x] **Endpoint agent (`agent.py`):** WMI process-start events, worker thread pool, PID-reuse
+  guards, path-validated critical-process safelist, alert / enforce modes, fail-open /
+  fail-closed grey-zone policy, resource watchdog.
+- [x] **Trust checks (`agent.py`):** native `WinVerifyTrust` with a publisher allow-list,
+  protected-path rule for catalog-signed OS binaries, bounded LRU cache keyed by
+  `(path, mtime_ns, size)`, SHA-256 whitelist in `whitelist.db`.
+- [x] **Live Sysmon sensor (`edr_sensor/`):** Rust / PyO3 extension on `EvtSubscribe`; computes
+  the 99 features exactly as training does (`parity_check.py`: 1470/1470 identical).
+- [x] **Behavior window:** scoring every 2 s for 30 s, up to 5 min for dormant processes, verdicts
+  for processes that exit early or before triage.
+- [x] **99-feature dataset (`build_behavioral_dataset.py`):** 1,470 balanced processes from
+  LMD-2023, Splunk processes dropped, usernames sanitized.
+- [x] **Tier 1 (`tier1_behavioral.onnx`):** ~21K-parameter MLP exported to ONNX for CPU inference.
+- [x] **Tier 2 (`server.py`):** FastAPI `/score` + `/health` serving a ~24K-parameter residual MLP
+  (`tier2_behavioral.pt`).
+- [x] **Threshold selection:** $\Theta = 0.6546$, the mean over 25 folds of the threshold giving
+  the highest TPR at FPR < 1%.
+- [x] **Evaluation:** 5-seed × 5-fold cross-validation, plus a separate 20% hold-out with its own
+  calibration split (`edr_sensor/live/build_holdout.py`).
+- [x] **Installer (`install_windows.ps1`):** Sysmon, sensor build and a boot-time scheduled task.
+- [x] **Dashboards:** Streamlit (`edr_soc_dashboard.py`) and FastAPI / WebSocket portal (`web_app.py`).
+- [x] **Publication suite:** interactive walkthrough (`/how/`), landing page (`site/`), diagrams.
+- [ ] **Explainable AI:** Integrated Gradients in `server.py` (only a static sample exists).
+- [ ] **Real analyst actions:** quarantine, IP block and host isolation are simulated.
 
 ---
 
@@ -681,17 +668,32 @@ The framework provides two zero-refresh user interfaces:
 To maintain rigorous engineering integrity, we explicitly define current boundary conditions and trade-offs:
 
 1. **User-Space vs. Kernel Driver Boundary:**
-   - *Current Implementation:* Utilizes WMI and ETW events dispatched in user-space.
+   - *Current Implementation:* Uses WMI process events and the Sysmon event log, both consumed in user space.
    - *Limitation:* Advanced Rootkits executing in Ring 0 using Direct Kernel Object Manipulation (DKOM) can unhook ETW providers before user-space agents observe the event.
 2. **Delayed Ransomware Execution (>30s Dormancy):**
-   - *Current Implementation:* Employs a dynamic 30-second sliding observation window.
-   - *Limitation:* Strains designed to sleep for minutes before encrypting files will register low behavioral velocity during the initial window.
+   - *Current Implementation:* Each process is watched for 30 s (up to 5 min if it shows no behavior), and its features come from its first 50 events.
+   - *Limitation:* Strains that look benign at first and only start encrypting after their first 50 events, or after the watch ends, are judged on the harmless part.
 3. **Multi-Process Split Execution:**
-   - *Current Implementation:* Evaluates process trees on an individual PID basis.
+   - *Current Implementation:* Evaluates each process on its own, not its whole process tree.
    - *Limitation:* Advanced threat actors splitting actions across multiple cooperating processes (e.g., Process A downloads payload, Process B modifies registry, Process C encrypts) may stay below single-process burst thresholds.
 4. **Offline Grey-Zone Network Partition:**
    - *Current Implementation:* Configurable Fail-Open / Fail-Closed policy when cloud connectivity is unavailable.
-   - *Trade-off:* If an endpoint is air-gapped and disconnected from Tier 2, grey-zone processes ($0.10 < \text{Score} < 0.90$) must either be allowed (potential risk) or suspended indefinitely (business disruption).
+   - *Trade-off:* If an endpoint is air-gapped and disconnected from Tier 2, grey-zone processes ($0.10 < \text{Score} < 0.90$) are either left running after 30 s (`OPEN`, the default: potential risk) or killed (`CLOSED`: business disruption).
+5. **Features Disabled Live:**
+   - The live Sysmon config turns off events 7, 8, 9, 10 and 23, so 11 of the 99 features are
+     always zero on real machines (section 5.2).
+6. **Signature Check Without Timeout:**
+   - A slow `WinVerifyTrust` call blocks one of the 8 worker threads until it returns.
+7. **Optimistic Cross-Validation:**
+   - Thresholds are tuned on the folds they are scored on, the `ProcessGuid` grouping does not
+     keep related processes together, and all data comes from lab machines (LMD-2023). Expect
+     real-world numbers closer to the hold-out results, or worse on everyday PCs.
+8. **Partial Windows Early On:**
+   - Training used each process's first 50 events; live scores taken before the window fills see
+     fewer events (`win_len_frac` < 1).
+9. **No Authentication:**
+   - `server.py` and `web_app.py` have no auth and Tier-2 traffic is plain HTTP by default; keep
+     them on localhost or behind TLS and an authenticating proxy.
 
 ---
 
@@ -757,8 +759,7 @@ powershell -ExecutionPolicy Bypass -File .\install_windows.ps1 -Mode enforce
 | `Get-Content agent.log -Wait -Tail 20` | watch verdicts live |
 | `install_windows.ps1 -Uninstall` | remove the auto-start task |
 | `install_windows.ps1 -Uninstall -RemoveSysmon` | also uninstall Sysmon |
-| `edr_sensor\live
-un_live_test.ps1` | end-to-end check with harmless activity |
+| `edr_sensor\live\run_live_test.ps1` | end-to-end check with harmless activity |
 | `python test_agent.py` | agent test suite |
 
 Without Rust, the agent falls back to **simulated** features. It runs, but it detects nothing and never kills.
