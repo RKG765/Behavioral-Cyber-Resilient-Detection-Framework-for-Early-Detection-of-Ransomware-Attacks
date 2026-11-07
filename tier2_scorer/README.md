@@ -59,6 +59,16 @@ last 5 minutes. Every action is audited. Reads: `overview`, `devices`, `devices/
 `events`, `reports`, `audit` (those three take `?day=YYYY-MM-DD`), `licences`. Actions:
 `devices/<id>/revoke|restore`, `ips/<ip>/block|unblock`.
 
+**Cloud pages** (viewer role, plan 6.3): `metrics/aws?range=1h|6h|24h[&q=<filter pattern>]` and
+`metrics/cloudflare?range=…`. The Lambda reads CloudWatch (`GetMetricStatistics`, one call per
+metric, run concurrently; CloudFront metrics from us-east-1) and CloudWatch Logs (`FilterLogEvents`,
+first 100 matches of `q`), or one Cloudflare GraphQL Analytics query. Each result is cached for 60 s
+per Lambda container, shared by all admins. The reply has `rpm` (requests per minute with the
+indexes of spikes: robust z-score > 3.5 on the median / MAD), `panels`, free-quota `quotas`, and
+`tables` (Cloudflare) or `logs` (AWS). 400 for another range, 502 when the cloud API fails, 503 when
+Cloudflare analytics isn't configured. `GetMetricData` is not used: it is billed from the first
+metric, while `GetMetricStatistics` is inside the free tier's 1M API requests.
+
 **Errors:** 400 bad body, 401 bad or missing signature, stale time, replay or unknown device,
 403 revoked device or licence invalid/full, 429 more than 60 requests per device per minute,
 502 edge publish failed (retry register). Error replies are not signed.
@@ -93,9 +103,14 @@ last 5 minutes. Every action is audited. Reads: `overview`, `devices`, `devices/
    | `CF_LIST_ID`, `CF_LISTS_TOKEN` | the `telltale_blocked` IP list; the token has *Account Filter Lists: Edit* only |
    | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Zero Trust team domain (`<team>.cloudflareaccess.com`) and the console's Access application audience tag |
    | `COGNITO_ISSUER`, `COGNITO_CLIENT_ID` | `https://cognito-idp.<region>.amazonaws.com/<pool id>` and the console's app client |
+   | `DDB_CAPACITY` | `{"<table>": [RCU, WCU]}`: the tables the AWS page charts and their provisioned capacity |
+   | `CF_ANALYTICS_TOKEN`, `CF_ZONE_ID`, `CF_WORKER_SCRIPT` | Cloudflare page; the token has *Account Analytics: Read* and *Zone Analytics: Read* only. Optional: empty turns the page off |
+   | `CLOUDFRONT_DISTRIBUTION_ID`, `SQS_QUEUE` | optional panels on the AWS page; empty hides them (there is no queue today) |
 
    The IAM role needs `dynamodb:GetItem`, `PutItem`, `UpdateItem` and `Scan` on devices and
-   licences, and `Query`, `Scan`, `PutItem` and `UpdateItem` on events and index.
+   licences, and `Query`, `Scan`, `PutItem` and `UpdateItem` on events and index. The Cloud pages add
+   `cloudwatch:GetMetricStatistics` (no resource-level permissions, so `*`) and `logs:FilterLogEvents`
+   on the function's own log group.
 5. **Admins:** add the email to `admin_emails` in `infra/cloudflare` (Access), then create the
    Cognito user and give it a role:
    ```bash

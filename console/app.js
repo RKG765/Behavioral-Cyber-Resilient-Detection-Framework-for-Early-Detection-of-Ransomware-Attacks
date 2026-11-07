@@ -341,6 +341,8 @@ const VIEWS = {
     { key: "action", label: "Action" },
     { key: "target", label: "Target", mono: true },
   ], "No admin actions on this day."),
+  aws: (view) => cloudView(view, "aws"),
+  cloudflare: (view) => cloudView(view, "cloudflare"),
 };
 
 function revokeBtn(id) {
@@ -402,6 +404,176 @@ async function dayView(view, title, lede, path, columns, empty) {
   };
   view.append(header(title, lede));
   await load();
+  return 0;
+}
+
+// ───────────── Cloud pages (plan 6.3): metrics proxied and cached by the admin Lambda ─────────────
+const CLOUD = {
+  aws: { title: "AWS", lede: "Lambda, DynamoDB and CloudFront from CloudWatch, the free-tier allowances, and a search of the API's logs.", logs: true },
+  cloudflare: { title: "Cloudflare", lede: "Edge traffic, security events and the Worker, from Cloudflare's analytics.", logs: false },
+};
+let cloudRange = "6h";
+let logPattern = "?ERROR ?error ?panicked ?failed";
+
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs = {}, ...kids) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  n.append(...kids.filter(Boolean));
+  return n;
+}
+const clock = (ts) => new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const fmt = (x) => (x == null ? "—" : Number.isInteger(x) || Math.abs(x) >= 100 ? Math.round(x).toLocaleString() : x.toFixed(1));
+const niceMax = (m) => { const p = 10 ** Math.floor(Math.log10(m)); return [1, 2, 2.5, 5, 10].map((f) => f * p).find((x) => x >= m); };
+const diamond = (cx, cy, r) => `M${cx} ${cy - r}L${cx + r} ${cy}L${cx} ${cy + r}L${cx - r} ${cy}Z`;
+
+/** Requests per minute as a line; spikes are labelled amber diamonds, listed beside it (the accessible fallback). */
+function rpmChart(d) {
+  const v = d.rpm.v, n = v.length, at = (i) => d.t0 + i * d.step;
+  const vals = v.filter((x) => x != null);
+  const spikes = d.rpm.anomalies ?? [];
+  const median = [...vals].sort((a, b) => a - b)[Math.floor(vals.length / 2)] ?? 0;
+  const label = `${d.rpm.label}, last ${d.range}: median ${fmt(median)}, peak ${fmt(Math.max(0, ...vals))}, ${plural(spikes.length, "spike")} marked.`;
+
+  const plot = (W) => {
+    const wide = W > 480, H = wide ? 240 : 200, L = 44, R = 16, T = 22, B = 26;
+    const top = niceMax(Math.max(1, ...vals) * 1.1);
+    const x = (i) => L + (n > 1 ? (i / (n - 1)) * (W - L - R) : 0);
+    const y = (val) => T + (1 - val / top) * (H - T - B);
+    const axis = svg("g", { class: "axis" });
+    for (let k = 0; k <= 4; k++) {
+      const yy = y((top * k) / 4);
+      axis.append(svg("line", { class: k ? "grid" : "base", x1: L, x2: W - R, y1: yy, y2: yy }), svg("text", { x: L - 8, y: yy + 4, "text-anchor": "end" }, fmt((top * k) / 4)));
+    }
+    const ticks = wide ? 6 : 3;
+    for (let k = 0; k <= ticks; k++) {
+      const i = Math.round((k * (n - 1)) / ticks);
+      axis.append(svg("text", { x: x(i), y: H - 6, "text-anchor": k === 0 ? "start" : k === ticks ? "end" : "middle" }, clock(at(i))));
+    }
+    let line = "", pen = false;
+    v.forEach((val, i) => {
+      if (val == null) { pen = false; return; }
+      line += `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(val).toFixed(1)}`;
+      pen = true;
+    });
+    const labelled = new Set([...spikes].sort((a, b) => v[b] - v[a]).slice(0, 5));
+    const marks = spikes.map((i) => {
+      const cx = x(i), cy = y(v[i]);
+      const anchor = cx > W - 70 ? "end" : cx < L + 40 ? "start" : "middle";
+      return svg("g", {}, svg("path", { class: "spike", d: diamond(cx, cy, 6) }),
+        labelled.has(i) && svg("text", { class: "spike-label", x: cx, y: cy - 11 < 12 ? cy + 20 : cy - 11, "text-anchor": anchor }, `${fmt(v[i])}/min`));
+    });
+    return svg("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": label }, axis, svg("path", { class: "line", d: line }), ...marks);
+  };
+
+  // Drawn at the figure's own pixel width, so labels stay 12px; redrawn when that width changes.
+  const figure = el("figure", {});
+  let drawn = 0;
+  new ResizeObserver(() => {
+    const cs = getComputedStyle(figure);
+    const W = Math.round(figure.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+    if (W < 200 || W === drawn) return;
+    drawn = W;
+    figure.replaceChildren(plot(W));
+  }).observe(figure);
+
+  const key = svg("svg", { class: "key", viewBox: "0 0 14 14", "aria-hidden": "true" }, svg("path", { class: "spike", d: diamond(7, 7, 5.5) }));
+  return el("div", { class: "chart" },
+    figure,
+    el("div", { class: "spikes" },
+      el("h3", {}, key, plural(spikes.length, "spike")),
+      el("p", {}, `Far above the median of ${fmt(median)} / min.`),
+      spikes.length ? el("ol", {}, spikes.map((i) => el("li", {}, el("b", {}, `${fmt(v[i])} / min`), el("span", {}, clock(at(i))))))
+        : el("p", {}, "None in this range.")));
+}
+
+/** Free-tier allowances as bullet bars; the tick marks 80%, the alert line. */
+function quotaBoard(qs) {
+  return el("div", { class: "board quotas" }, qs.map((q) => {
+    const pct = q.limit ? (q.used / q.limit) * 100 : 0;
+    const bar = el("b");
+    bar.style.setProperty("--share", `${Math.min(100, pct)}%`); // CSSOM, allowed by the CSP
+    return el("div", { class: "quota" },
+      el("span", { class: "quota-name" }, q.label),
+      el("span", { class: "quota-bar", "aria-hidden": "true" }, bar),
+      el("span", { class: "quota-num" }, `${fmt(q.used)} of ${fmt(q.limit)} ${q.unit}`, el("span", { class: "quiet" }, ` · ${pct > 0 && pct < 1 ? "<1" : Math.round(pct)}%`)),
+      pct >= 100 ? el("span", { class: "chip" }, "Over limit") : pct >= 80 ? el("span", { class: "chip" }, "Near limit") : el("span", { class: "quiet" }, "Within limit"));
+  }), el("p", { class: "board-foot" }, "Free-tier allowances. The tick on each bar marks 80%."));
+}
+
+function figures(series) {
+  return el("dl", { class: "hour figs" }, series.map((s) => {
+    const xs = s.v ? s.v.filter((x) => x != null) : [s.value];
+    const val = !xs.length ? null : s.agg === "sum" ? xs.reduce((a, b) => a + b, 0) : Math.max(...xs);
+    const note = [s.unit, s.v ? (s.agg === "sum" ? "total" : "peak") : ""].filter(Boolean).join(" ");
+    return el("div", {}, el("dt", {}, s.label), el("dd", {}, fmt(val), note ? el("span", { class: "quiet" }, note) : null));
+  }));
+}
+
+async function cloudView(view, kind) {
+  const c = CLOUD[kind];
+  const stamp = el("span", { class: "count" });
+  const chartBox = el("section", { "aria-labelledby": "h-rpm" });
+  const quotaBox = el("section", { "aria-labelledby": "h-quota" });
+  const panelBox = el("div");
+  const tableBox = el("div", { class: "pair" });
+  const tables = [];
+  const logBox = el("div");
+  let logTable = null;
+  const fail = (e) => toast(`Could not load: ${e.message}`);
+
+  const load = async () => {
+    const q = c.logs ? `&q=${encodeURIComponent(logPattern)}` : "";
+    const d = await api(`metrics/${kind}?range=${cloudRange}${q}`);
+    stamp.textContent = `Updated ${when(d.generated)}`;
+    chartBox.replaceChildren(el("h2", { id: "h-rpm" }, d.rpm.label), rpmChart(d));
+    quotaBox.replaceChildren(el("h2", { id: "h-quota" }, "Free quota"), quotaBoard(d.quotas));
+    panelBox.replaceChildren(...d.panels.map((p) => el("section", {}, el("h2", {}, p.title), figures(p.series))));
+    // Tables are built once and updated in place, so a refresh keeps their filters and focus.
+    (d.tables ?? []).forEach((t, i) => {
+      if (!tables[i]) {
+        const h = el("h2", {});
+        const w = table(t.columns, t.rows, { sort: "count", desc: true, empty: "Nothing in this range." });
+        tables[i] = { h, w };
+        tableBox.append(el("section", {}, h, w));
+      }
+      tables[i].h.textContent = t.title;
+      tables[i].w.update(t.rows);
+    });
+    if (!c.logs) return;
+    if (d.logs?.error) {
+      logTable = null;
+      logBox.replaceChildren(el("div", { class: "problem", role: "alert" }, `Log search failed: ${d.logs.error}`));
+    } else if (!logTable) {
+      logBox.replaceChildren(logTable = table([
+        { key: "ts", label: "Time", render: (r) => when(r.ts) },
+        { key: "stream", label: "Log stream", mono: true, render: (r) => el("span", { title: r.stream }, short(r.stream, 24)) },
+        { key: "message", label: "Message", mono: true, wrap: true },
+      ], d.logs ?? [], { sort: "ts", empty: "No log lines match in this range." }));
+    } else {
+      logTable.update(d.logs ?? []);
+    }
+  };
+
+  const ranges = ["1h", "6h", "24h"].map((r) => el("button", { class: "btn", type: "button", "aria-pressed": String(r === cloudRange), onclick: () => {
+    cloudRange = r;
+    ranges.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent === r)));
+    load().catch(fail);
+  } }, r));
+  view.append(header(c.title, c.lede, el("div", { class: "tools" }, el("div", { class: "seg", role: "group", "aria-label": "Time range" }, ranges), stamp)),
+    chartBox, quotaBox, panelBox, tableBox);
+  if (c.logs) {
+    const input = el("input", { type: "search", value: logPattern, spellcheck: "false", "aria-describedby": "log-help" });
+    const form = el("form", { class: "tools", onsubmit: (e) => { e.preventDefault(); logPattern = input.value.trim(); load().catch(fail); } },
+      el("label", { class: "field grow" }, "Filter pattern", input),
+      el("button", { class: "btn primary", type: "submit" }, "Search"));
+    view.append(el("section", { "aria-labelledby": "h-logs" },
+      el("h2", { id: "h-logs" }, "Log search"),
+      el("p", { id: "log-help", class: "lede" }, "CloudWatch Logs filter syntax over the selected range; the first 100 matches. Leave it empty for every line."),
+      form, logBox));
+  }
+  await load();
+  timer = setInterval(() => { if (!document.hidden) load().catch(() => {}); }, 60_000); // the proxy caches for 60 s
   return 0;
 }
 

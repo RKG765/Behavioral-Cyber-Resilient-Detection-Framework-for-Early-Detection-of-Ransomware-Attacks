@@ -4,6 +4,7 @@
 //!   POST /v1/report     via the Worker only: a report the user chose to send, signed by the device
 //!   POST /internal/log  via the Worker only: one request log event
 //!   GET|POST /admin/*   via the console's Pages Function only: Access JWT + Cognito ID token
+//!                       (incl. /admin/metrics/{aws,cloudflare}, the Cloud pages, plan 6.3)
 //! Env: README.md -> Setup.
 // shortcut: secrets come from Lambda env vars (encrypted at rest); move them to SSM in hardening.
 
@@ -18,6 +19,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tier2_scorer::admin::{self, AccessClaims, CognitoClaims, Jwks, Role};
 use tier2_scorer::auth::{self, AuthError, Guard, SignedHeaders};
+use tier2_scorer::cloud::{self, day};
 use tier2_scorer::{score, verdict, FEATURE_DIM};
 
 type Item = HashMap<String, AttributeValue>;
@@ -41,6 +43,23 @@ struct App {
     http: reqwest::Client,
     guard: Guard,
     rejects: Mutex<HashMap<String, i64>>,
+    obs: Observability,
+}
+
+/// The Cloud pages' sources (plan 6.3). Optional: empty values turn a panel off, never the scorer.
+struct Observability {
+    cw: aws_sdk_cloudwatch::Client,
+    cw_us_east_1: aws_sdk_cloudwatch::Client,
+    logs: aws_sdk_cloudwatchlogs::Client,
+    function: String,
+    tables: Vec<(String, f64, f64)>,
+    distribution: String,
+    queue: String,
+    cf_graphql_token: String,
+    cf_account: String,
+    cf_zone: String,
+    cf_worker: String,
+    cache: cloud::Cache,
 }
 
 #[derive(Deserialize)]
@@ -131,20 +150,6 @@ fn now() -> i64 {
 
 fn now_ms() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
-}
-
-/// UTC calendar day "YYYY-MM-DD" for Unix seconds (days-from-civil, inverted).
-fn day(secs: i64) -> String {
-    let z = secs.div_euclid(86_400) + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
 }
 
 fn s(v: impl Into<String>) -> AttributeValue {
@@ -607,6 +612,61 @@ async fn block_ip(app: &App, admin_email: &str, ip: &str, action: &str) -> Resul
     reply(if ok { 200 } else { 502 }, json!({ "ip": ip, "action": action, "edge_updated": ok }))
 }
 
+/// The Cloud pages: one cached fetch per source and range (plan 6.3).
+async fn metrics(app: &App, which: &str, range: Option<&str>, q: Option<&str>) -> Result<Response<Body>, Error> {
+    let Some((label, secs, step)) = cloud::range(range) else {
+        return reply(400, json!({ "error": "range must be 1h, 6h or 24h" }));
+    };
+    let o = &app.obs;
+    let t = now();
+    let cached = |key: String, fetched: Result<Value, String>| fetched.inspect(|v| o.cache.put(&key, t, v.clone()));
+    let key = format!("{which}:{label}");
+    let mut body = match o.cache.get(&key, t) {
+        Some(v) => Ok(v),
+        None if which == "aws" => {
+            let a = cloud::Aws { cw: &o.cw, cw_us_east_1: &o.cw_us_east_1, function: &o.function, tables: &o.tables, distribution: &o.distribution, queue: &o.queue };
+            cached(key, cloud::aws(&a, label, secs, step, t).await)
+        }
+        None if o.cf_graphql_token.is_empty() || o.cf_zone.is_empty() => {
+            return reply(503, json!({ "error": "Cloudflare analytics is not configured (CF_ANALYTICS_TOKEN, CF_ZONE_ID)" }));
+        }
+        None => cached(key, cloudflare(app, label, secs, step, t).await),
+    };
+    if let (Ok(Value::Object(m)), Some(q)) = (&mut body, q.filter(|_| which == "aws")) {
+        let q = cap(q, 200);
+        let key = format!("logs:{label}:{q}");
+        let group = format!("/aws/lambda/{}", o.function);
+        let found = match o.cache.get(&key, t) {
+            Some(v) => Ok(v),
+            None => cached(key, cloud::logs(&o.logs, &group, &q, t - secs, t).await),
+        };
+        m.insert("logs".into(), found.unwrap_or_else(|e| json!({ "error": e })));
+    }
+    match body {
+        Ok(v) => reply(200, v),
+        Err(e) => {
+            eprintln!("metrics: {e}");
+            reply(502, json!({ "error": e }))
+        }
+    }
+}
+
+async fn cloudflare(app: &App, label: &str, secs: i64, step: i64, t: i64) -> Result<Value, String> {
+    let o = &app.obs;
+    let (t0, n) = cloud::grid(t, secs, step);
+    let body = json!({ "query": cloud::cf_query(step), "variables": cloud::cf_vars(&o.cf_zone, &o.cf_account, &o.cf_worker, t0, t) });
+    let r = app
+        .http
+        .post("https://api.cloudflare.com/client/v4/graphql")
+        .bearer_auth(&o.cf_graphql_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Cloudflare analytics: {e}"))?;
+    let resp: Value = r.json().await.map_err(|e| format!("Cloudflare analytics: {e}"))?;
+    cloud::cf_panels(&resp, label, t0, step, n, t)
+}
+
 async fn admin_route(app: &App, req: &Request) -> Result<Response<Body>, Error> {
     let path = req.uri().path().trim_end_matches('/').to_string();
     let parts: Vec<&str> = path.split('/').skip(2).collect(); // after "/admin"
@@ -639,6 +699,7 @@ async fn admin_route(app: &App, req: &Request) -> Result<Response<Body>, Error> 
         (false, ["reports"]) => list(query(app, &app.events, on_day("r"), 500).await?),
         (false, ["audit"]) => list(query(app, &app.events, on_day("a"), 500).await?),
         (false, ["licences"]) => list(scan(app, &app.licences, None).await?),
+        (false, ["metrics", which @ ("aws" | "cloudflare")]) => metrics(app, which, params.first("range"), params.first("q")).await,
         (true, ["devices", id, action @ ("revoke" | "restore")]) => set_status(app, &user, id, action).await,
         (true, ["ips", ip, action @ ("block" | "unblock")]) => block_ip(app, &user, ip, action).await,
         _ => reply(404, json!({ "error": "not found" })),
@@ -673,10 +734,31 @@ async fn main() -> Result<(), Error> {
     let cf = |path: &str| -> Result<String, String> {
         Ok(format!("https://api.cloudflare.com/client/v4/accounts/{}/{path}", env("CF_ACCOUNT_ID")?))
     };
+    let opt = |k: &str| std::env::var(k).unwrap_or_default();
+    let aws = aws_config::load_from_env().await;
+    let us_east_1 = aws_sdk_cloudwatch::config::Builder::from(&aws).region(aws_config::Region::new("us-east-1")).build();
+    // {"<table>": [RCU, WCU]} from Terraform: the tables to chart and their provisioned capacity.
+    let capacity: HashMap<String, (f64, f64)> = serde_json::from_str(&opt("DDB_CAPACITY")).unwrap_or_default();
+    let mut tables: Vec<(String, f64, f64)> = capacity.into_iter().map(|(k, (r, w))| (k, r, w)).collect();
+    tables.sort_by(|a, b| a.0.cmp(&b.0));
+    let obs = Observability {
+        cw: aws_sdk_cloudwatch::Client::new(&aws),
+        cw_us_east_1: aws_sdk_cloudwatch::Client::from_conf(us_east_1),
+        logs: aws_sdk_cloudwatchlogs::Client::new(&aws),
+        function: std::env::var("AWS_LAMBDA_FUNCTION_NAME").unwrap_or_else(|_| "telltale-api".into()),
+        tables,
+        distribution: opt("CLOUDFRONT_DISTRIBUTION_ID"),
+        queue: opt("SQS_QUEUE"),
+        cf_graphql_token: opt("CF_ANALYTICS_TOKEN"),
+        cf_account: opt("CF_ACCOUNT_ID"),
+        cf_zone: opt("CF_ZONE_ID"),
+        cf_worker: opt("CF_WORKER_SCRIPT"),
+        cache: cloud::Cache::default(),
+    };
     let access_team = env("ACCESS_TEAM_DOMAIN")?; // e.g. myteam.cloudflareaccess.com
     let cognito_issuer = env("COGNITO_ISSUER")?; // https://cognito-idp.<region>.amazonaws.com/<pool id>
     let app = App {
-        db: aws_sdk_dynamodb::Client::new(&aws_config::load_from_env().await),
+        db: aws_sdk_dynamodb::Client::new(&aws),
         devices: env("DEVICES_TABLE")?,
         licences: env("LICENCES_TABLE")?,
         events: env("EVENTS_TABLE")?,
@@ -696,6 +778,7 @@ async fn main() -> Result<(), Error> {
         http: reqwest::Client::new(),
         guard: Guard::default(),
         rejects: Mutex::new(HashMap::new()),
+        obs,
     };
     let app: &'static App = Box::leak(Box::new(app)); // lives as long as the Lambda container
     run(service_fn(move |req| handler(app, req))).await

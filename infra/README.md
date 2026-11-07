@@ -1,11 +1,11 @@
 # infra: edge protection and the SOC console as code
 
-Terraform for both clouds (plan: `docs/PROD_ARCHITECTURE.md`, build steps 3 and 5). Only
+Terraform for both clouds (plan: `docs/PROD_ARCHITECTURE.md`, build steps 3, 5 and 6). Only
 `terraform validate` has run; the real-account checks are in `docs/INTEGRATION_TESTS.md`.
 
 | Folder | What it creates |
 |---|---|
-| `aws/` | DynamoDB tables `telltale_devices`, `telltale_licences`, `telltale_events` (TTL `expires`) and `telltale_index` (provisioned, 22 RCU / 23 WCU of the free 25 / 25; `apply` refuses more), the Lambda (IAM-auth function URL) and its env, CloudFront with Origin Access Control plus an `/admin/*` behaviour, the edge-filter CloudFront Function, the Cognito admin pool (Essentials, MFA required: password + authenticator app, admin-created users only, groups `viewer` / `analyst` / `admin`), its public PKCE app client (15-minute tokens) and managed-login domain, a $1 budget alarm |
+| `aws/` | DynamoDB tables `telltale_devices`, `telltale_licences`, `telltale_events` (TTL `expires`) and `telltale_index` (provisioned, 22 RCU / 23 WCU of the free 25 / 25; `apply` refuses more), the Lambda (IAM-auth function URL) and its env, CloudFront with Origin Access Control plus an `/admin/*` behaviour, the edge-filter CloudFront Function, the Cognito admin pool (Essentials, MFA required: password + authenticator app, admin-created users only, groups `viewer` / `analyst` / `admin`), its public PKCE app client (15-minute tokens) and managed-login domain, a $1 budget alarm, and the Cloud pages' read-only CloudWatch / Logs permissions |
 | `cloudflare/` | Zone TLS settings (Full strict, TLS 1.2+, HTTPS only, HSTS), a custom rule that drops unsigned API requests, the blocked-IP list, the one free rate-limit rule, Bot Fight Mode **off**; the `telltale-console` Pages project on `admin.<domain>`, and the Access application (also covering its `pages.dev` names) with a policy for the `admin_emails` list, plus a bypass for certificate checks |
 
 The Worker, its KV namespace and its secrets, and the console's files and secrets, are deployed with
@@ -40,6 +40,10 @@ and the Cognito ID token.
    `origin_secret`, `cf_account_id`, `cf_kv_namespace`, `cf_api_token`, `admin_hostname`,
    `cognito_domain_prefix`, `access_team_domain` (`<team>.cloudflareaccess.com`), `access_aud`,
    `cf_list_id` and `cf_lists_token` (a token with *Account Filter Lists: Edit* only).
+   For the Cloud → Cloudflare page also set `cf_zone_id` and `cf_analytics_token` (a token with
+   *Account Analytics: Read* and *Zone Analytics: Read* only); without them the page says it isn't
+   configured. For the CloudFront panel, apply once more with `cloudfront_distribution_id` set to
+   the `cloudfront_distribution_id` output (the Lambda can't reference its own distribution).
 5. Put the `api_url` output into the Worker's `AWS_API_URL`, then `npx wrangler deploy`.
 6. **Console:** put the `cognito_domain` and `cognito_client_id` outputs into `console/config.js`, then
    ```bash

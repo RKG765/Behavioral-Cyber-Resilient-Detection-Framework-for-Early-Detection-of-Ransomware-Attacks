@@ -9,6 +9,8 @@ use std::sync::OnceLock;
 pub mod admin;
 #[cfg(feature = "lambda")]
 pub mod auth;
+#[cfg(feature = "lambda")]
+pub mod cloud;
 
 pub const FEATURE_DIM: usize = 99;
 const HIDDEN: usize = 64;

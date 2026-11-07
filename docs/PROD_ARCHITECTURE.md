@@ -437,7 +437,7 @@ sequenceDiagram
     participant U as Admin browser
     participant P as Console (Pages, behind Access)
     participant M as Metrics proxy (admin Lambda)
-    participant C as Cache (DynamoDB, 60 s TTL)
+    participant C as Cache (Lambda memory, 60 s)
     participant AW as CloudWatch API
     participant CF as Cloudflare GraphQL Analytics API
 
@@ -448,7 +448,7 @@ sequenceDiagram
     alt cache hit (< 60 s old)
         C-->>M: panels
     else miss
-        M->>AW: GetMetricData (one batched call for all panels)
+        M->>AW: GetMetricStatistics (one call per metric, concurrently)
         AW-->>M: time series
         M->>C: store 60 s
     end
@@ -461,7 +461,7 @@ sequenceDiagram
 ```
 
 - The browser **never holds a cloud credential**. The proxy uses an IAM role limited to
-  `cloudwatch:GetMetricData`, `logs:FilterLogEvents` and `logs:StartQuery`/`GetQueryResults` on the
+  `cloudwatch:GetMetricStatistics` and `logs:FilterLogEvents` on the
   Telltale log groups. The Cloudflare token can only read Analytics, with no write scopes.
 - **Batched, cached, polled every 60 s**, so even several admins stay far inside the API allowances.
   Live mode on the request log uses the app's own log table, not the cloud APIs.
@@ -663,6 +663,21 @@ other processes. Plan beta testing around that.
    block list is still a Terraform variable. Real-account checks are
    in [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 6. **Cloud observability:** metrics proxy with caching, AWS and Cloudflare pages, quota gauges, alerts.
+   *Status: built. `/admin/metrics/aws` and `/admin/metrics/cloudflare` in the Lambda
+   ([`tier2_scorer/src/cloud.rs`](../tier2_scorer/src/cloud.rs)), the Cloud → AWS and Cloud →
+   Cloudflare pages in `console/` (requests-per-minute line with labelled spikes and a spike list,
+   free-quota bars with an 80% tick, panel figures, Cloudflare security tables, log search), and the
+   IAM and env in `infra/aws`. Tested: Rust unit tests (ranges, cache expiry, bucket filling, spike
+   detection, CloudWatch panel assembly, GraphQL response parsing), `terraform validate`, and both
+   pages against local sample data at desktop and phone width. Changes found while building:
+   CloudWatch is read with `GetMetricStatistics`, because `GetMetricData` is billed from the first
+   metric and the free tier's 1M API requests cover only the former; the 60 s cache is in Lambda
+   memory, not DynamoDB, so it costs no write capacity; ranges stop at 24 h (Cloudflare Free keeps
+   adaptive analytics briefly); there is no SQS queue (logs are written directly, step 5), so the SQS
+   panel stays off unless `SQS_QUEUE` is set; the CloudFront distribution ID needs a second apply
+   (dependency cycle). Not built: Logs Insights, the Budgets spend panel, KV and Access-login panels,
+   and alert emails (the quota bars flag 80% on the page only). Real-account checks are in
+   [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 7. **Obfuscation and packaging:** `obfstr`, TLS pinning, Nuitka builds, Windows service, Inno / WiX
    installer, self-signed signing, signed updates.
 8. **Hardening and beta:** replay / stolen-key / synthetic-vector / flood tests within the free limits,

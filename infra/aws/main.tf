@@ -108,6 +108,32 @@ variable "cf_lists_token" {
   sensitive   = true
 }
 
+# ───────────── Cloud pages (plan 6.3) ─────────────
+variable "cf_analytics_token" {
+  description = "Cloudflare token with Account Analytics: Read and Zone Analytics: Read only (Cloud -> Cloudflare page). Empty turns the page off."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "cf_zone_id" {
+  description = "Cloudflare zone ID (the zone_id you gave infra/cloudflare)"
+  type        = string
+  default     = ""
+}
+
+variable "cf_worker_script" {
+  description = "Worker script name (`name` in worker/wrangler.toml)"
+  type        = string
+  default     = "telltale-tier2"
+}
+
+variable "cloudfront_distribution_id" {
+  description = "From `terraform output cloudfront_distribution_id` after the first apply (the Lambda can't reference its own distribution: a dependency cycle). Empty hides the CloudFront panel."
+  type        = string
+  default     = ""
+}
+
 # Provisioned [RCU, WCU] per table. The always-free tier is 25 RCU + 25 WCU per region, in total.
 locals {
   capacity = {
@@ -222,6 +248,19 @@ resource "aws_iam_role_policy" "tables" {
   })
 }
 
+# Cloud -> AWS page. CloudWatch metrics have no resource-level permissions, hence "*" (read only).
+# GetMetricStatistics, not GetMetricData: only the former is in the free tier's 1M API requests.
+resource "aws_iam_role_policy" "observability" {
+  role = aws_iam_role.api.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Effect = "Allow", Action = ["cloudwatch:GetMetricStatistics"], Resource = "*" },
+      { Effect = "Allow", Action = ["logs:FilterLogEvents"], Resource = "${aws_cloudwatch_log_group.api.arn}:*" },
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/telltale-api"
   retention_in_days = 14
@@ -240,21 +279,31 @@ resource "aws_lambda_function" "api" {
   reserved_concurrent_executions = var.reserved_concurrency
   environment {
     variables = {
-      DEVICES_TABLE         = aws_dynamodb_table.devices.name
-      LICENCES_TABLE        = aws_dynamodb_table.licences.name
-      RESPONSE_SIGNING_SEED = var.response_signing_seed
-      ORIGIN_SECRET         = var.origin_secret
-      CF_ACCOUNT_ID         = var.cf_account_id
-      CF_KV_NAMESPACE       = var.cf_kv_namespace
-      CF_API_TOKEN          = var.cf_api_token
-      EVENTS_TABLE          = aws_dynamodb_table.events.name
-      INDEX_TABLE           = aws_dynamodb_table.index.name
-      ACCESS_TEAM_DOMAIN    = var.access_team_domain
-      ACCESS_AUD            = var.access_aud
-      COGNITO_ISSUER        = "https://${aws_cognito_user_pool.admin.endpoint}"
-      COGNITO_CLIENT_ID     = aws_cognito_user_pool_client.console.id
-      CF_LIST_ID            = var.cf_list_id
-      CF_LISTS_TOKEN        = var.cf_lists_token
+      DEVICES_TABLE              = aws_dynamodb_table.devices.name
+      LICENCES_TABLE             = aws_dynamodb_table.licences.name
+      RESPONSE_SIGNING_SEED      = var.response_signing_seed
+      ORIGIN_SECRET              = var.origin_secret
+      CF_ACCOUNT_ID              = var.cf_account_id
+      CF_KV_NAMESPACE            = var.cf_kv_namespace
+      CF_API_TOKEN               = var.cf_api_token
+      EVENTS_TABLE               = aws_dynamodb_table.events.name
+      INDEX_TABLE                = aws_dynamodb_table.index.name
+      ACCESS_TEAM_DOMAIN         = var.access_team_domain
+      ACCESS_AUD                 = var.access_aud
+      COGNITO_ISSUER             = "https://${aws_cognito_user_pool.admin.endpoint}"
+      COGNITO_CLIENT_ID          = aws_cognito_user_pool_client.console.id
+      CF_LIST_ID                 = var.cf_list_id
+      CF_LISTS_TOKEN             = var.cf_lists_token
+      CF_ANALYTICS_TOKEN         = var.cf_analytics_token
+      CF_ZONE_ID                 = var.cf_zone_id
+      CF_WORKER_SCRIPT           = var.cf_worker_script
+      CLOUDFRONT_DISTRIBUTION_ID = var.cloudfront_distribution_id
+      DDB_CAPACITY = jsonencode({
+        (aws_dynamodb_table.devices.name)  = local.capacity.devices
+        (aws_dynamodb_table.licences.name) = local.capacity.licences
+        (aws_dynamodb_table.events.name)   = local.capacity.events
+        (aws_dynamodb_table.index.name)    = local.capacity.index
+      })
     }
   }
   depends_on = [aws_cloudwatch_log_group.api]
@@ -496,6 +545,11 @@ resource "aws_budgets_budget" "free_tier_guard" {
 output "api_url" {
   description = "Set as the Worker's AWS_API_URL and the agent's fallback endpoint"
   value       = "https://${aws_cloudfront_distribution.api.domain_name}"
+}
+
+output "cloudfront_distribution_id" {
+  description = "Set as cloudfront_distribution_id and apply again, for the Cloud -> AWS page"
+  value       = aws_cloudfront_distribution.api.id
 }
 
 output "cognito_domain" {

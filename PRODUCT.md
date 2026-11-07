@@ -36,11 +36,11 @@ that need a fresh sign-in.
 ## Capabilities and Constraints
 
 - Views: Overview, Devices, Device detail (IP history), IPs, Live log, Rejected, Reports, Licences,
-  Audit. Licences are read-only.
+  Audit, Cloud → AWS and Cloud → Cloudflare. Licences are read-only.
 - Plain HTML / CSS / JS, no build step, served by Cloudflare Pages; API at `/admin/*`.
 - Strict CSP: scripts and styles from the same origin only; no third-party fonts or CDNs.
 - Device-supplied strings (names, paths, IPs) are untrusted and are shown as text only.
-- Charts for cloud metrics are planned for step 6, not this console revision.
+- The Cloud pages (step 6) chart requests per minute with spikes marked, and show free-quota bars.
 
 ## Evidence on Hand
 

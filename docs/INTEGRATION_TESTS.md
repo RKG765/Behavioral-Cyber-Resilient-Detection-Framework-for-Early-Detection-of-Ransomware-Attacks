@@ -168,3 +168,38 @@ below has run on real accounts.
   rejected floods are sampled per IP rather than logged one by one.
 - [ ] **Agent reports:** Send report in the dialog reaches the Reports view, and an offline report is
   uploaded from the outbox later.
+
+## Step 6: cloud observability
+
+Built: `/admin/metrics/aws` and `/admin/metrics/cloudflare` in the Lambda (60 s in-memory cache), the
+Cloud → AWS and Cloud → Cloudflare console pages, and the IAM and env in `infra/aws`. Tested: Rust
+unit tests for parsing, caching and spike detection, `terraform validate`, and both pages against the
+local sample data (`?demo`) at desktop and phone width. Nothing below has run on real accounts.
+
+- [ ] **Terraform apply** adds the `observability` role policy and the new env vars, then a second
+  apply with `cloudfront_distribution_id` set from the output shows the CloudFront panel.
+- [ ] **CloudWatch reads:** the AWS page fills every panel with `GetMetricStatistics`, including
+  Lambda `Duration` p50 / p99 (extended statistics) and CloudFront from us-east-1 (`Region=Global`).
+  An IAM denial surfaces as a 502 with the CloudWatch error on the page.
+- [ ] **Free tier holds:** CloudWatch shows no `GetMetricData` charges, and the API request count
+  stays well inside 1M a month. Each refresh is about 22 calls (6 Lambda, 16 DynamoDB) plus 1-3
+  month-to-date calls; with the page open all day at one refresh a minute that is about 1M a month,
+  so check the real count after a week and lengthen the console's 60 s refresh if it is high.
+- [ ] **Cache:** two admins on the same page within 60 s cause one set of CloudWatch calls (look at
+  CloudTrail or the Lambda logs). Each Lambda container keeps its own cache.
+- [ ] **Log search:** the default pattern `?ERROR ?error ?panicked ?failed` returns the Lambda's error
+  lines; an empty pattern returns the first 100 lines of the range; a bad pattern shows the
+  CloudWatch error in the log box, not a broken page. Check how slow a 24 h scan is on a busy day.
+- [ ] **Cloudflare GraphQL on the Free plan:** the query is accepted with a token that has only
+  *Account Analytics: Read* and *Zone Analytics: Read*. Confirm `httpRequestsAdaptiveGroups` with
+  `datetimeMinute` / `datetimeFiveMinutes`, `firewallEventsAdaptive` and `workersInvocationsAdaptive`
+  (`sum.requests`, `quantiles.cpuTimeP50`) all exist and that 24 h is inside the plan's query window
+  (`settings { httpRequestsAdaptiveGroups { maxDuration notOlderThan } }`). If a node is refused,
+  the page shows Cloudflare's error message.
+- [ ] **Bucket times match:** Cloudflare returns `datetimeMinute` as `YYYY-MM-DDTHH:MM:SSZ`; the parser
+  matches buckets by that exact string, so a different format would show an empty edge chart.
+- [ ] **Worker quota gauge:** "Worker requests today (UTC)" matches the Workers dashboard for the day.
+- [ ] **Spike detection on real traffic:** a burst (e.g. 10× normal for a minute from a test client)
+  is flagged, and quiet nights with near-zero traffic don't flag noise.
+- [ ] **Console against the real API:** both pages load through Access + Cognito with a `viewer`
+  account, the range picker refetches, and auto-refresh stops while the tab is hidden.

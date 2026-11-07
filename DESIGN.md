@@ -149,7 +149,7 @@ A warm, low-chroma paper-and-ink palette with four saturated triage inks held ba
 ### Tertiary (triage inks: state only)
 - **Revoked Black** (`triage-revoked`): Level 0. The filled band and name tab for revoked devices. Same value as Ink on purpose: revocation is the absence of trust, not an alarm.
 - **Signal Red** (`triage-failed`): Level 1, Failed, a request state only. Also the Kill verdict word, the danger button, the problem banner, and the dialog band for destructive confirms.
-- **Tag Amber** (`triage-lower-trust`): Level 2, Lower trust. A fill only, always with Ink text on it; never used as text colour. Also carries the "New" chip and the 16% tint on fresh live-log rows.
+- **Tag Amber** (`triage-lower-trust`): Level 2, Lower trust. A fill only, always with Ink text on it; never used as text colour. Also carries the "New" chip, the "Near limit" / "Over limit" quota chips, the spike diamonds on the requests chart, and the 16% tint on fresh live-log rows.
 - **Ledger Green** (`triage-verified`): Level 3, Verified. Fill, word colour on the tag, and the sign-in card's top band.
 
 ### Neutral
@@ -162,7 +162,7 @@ A warm, low-chroma paper-and-ink palette with four saturated triage inks held ba
 - **Selection Straw** (`selection-straw`): Text selection only.
 
 ### Named Rules
-**The Triage Ink Rule.** The four-band strip and the band name tabs mean trust state and nothing else. Outside the strip the inks keep only their listed secondary roles (red for destructive and Kill, amber for unseen or exhausted markers, green for the sign-in band). Every appearance is paired with a word; colour alone never carries status.
+**The Triage Ink Rule.** The four-band strip and the band name tabs mean trust state and nothing else. Outside the strip the inks keep only their listed secondary roles (red for destructive and Kill, amber for unseen, exhausted or anomalous markers, green for the sign-in band). Every appearance is paired with a word; colour alone never carries status.
 
 **The Amber Is a Fill Rule.** Amber never colours text. It is a background with Ink on top.
 
@@ -251,6 +251,15 @@ The ink rail: brand mark (a tiny three-band tag) and wordmark at top, uppercase 
 
 ### Tables
 Card Stock in a bordered wrap, sticky Paper header whose cells are full-width sort buttons in Quiet Ink (Ink when sorted, with a small CSS triangle). Rows 2.25rem, hover Card Hover. Revoked rows render greyscale in Quiet Ink with the device link struck through. Fresh live-log rows carry an amber tint (`rgb(232 163 23 / 0.16)`) plus a "New" chip until the analyst marks them seen.
+
+### Requests Chart (Cloud pages)
+A bordered Card Stock module split into the plot and a Paper side strip. The plot is a single 1.75px Ink line on Hairline gridlines, with 12px Quiet Ink axis numerals in tabular figures, drawn in SVG at the figure's own pixel width (a ResizeObserver redraws it) so text never scales. Spikes are amber diamonds with an Ink stroke and a 600-weight `N/min` label (the five largest are labelled). The side strip repeats every spike as a list with its value and time, plus the median, so nothing depends on the shape or the colour. It stacks under the plot on phones.
+
+### Quota Bars (Cloud pages)
+Rows in a board module: name, an 8px bar (Paper track, Ink fill) with a 2px Quiet Ink tick at 80%, the value as `used of limit unit · pct%`, and a word: "Within limit" in Quiet Ink, or an amber "Near limit" / "Over limit" chip. Fixed tracks keep the bars aligned row to row; on phones each row restacks to name and word, bar, value.
+
+### Range Picker
+A segmented row of default buttons (1h / 6h / 24h) sharing borders; the selected one is the pressed toggle (solid Ink). Full width on phones.
 
 ### Confirm Dialog
 Native `<dialog>`, 28rem max, square, Card Stock with a flat 6px top band: Ink for ordinary confirms, Signal Red for destructive ones. Title, Quiet Ink body, the target in a mono inset box on Paper, then Cancel and the action button right-aligned. Destructive confirms use the solid danger button.

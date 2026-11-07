@@ -83,9 +83,82 @@ function overview() {
   };
 }
 
+// Cloud pages: the shapes the Lambda's /admin/metrics/* returns (tier2_scorer/src/cloud.rs). The
+// spikes are planted, and listed as the anomalies the server would flag.
+const RANGES = { "1h": [3600, 60], "6h": [21_600, 60], "24h": [86_400, 300] };
+function metrics(kind, range, q) {
+  const [secs, step] = RANGES[range] ?? RANGES["6h"];
+  const t = now(), t0 = Math.floor((t - secs) / step) * step, n = secs / step + 1;
+  const spikes = [Math.floor(n * 0.31), Math.floor(n * 0.78)];
+  const per = step / 60;
+  const wave = (base, amp, kick = [6, 9]) => Array.from({ length: n }, (_, i) => {
+    const v = Math.max(0, base + amp * Math.sin(i / (n / 5)) + (rnd() - 0.5) * amp * 0.8);
+    const k = spikes.indexOf(i);
+    return Math.round((k < 0 ? v : v * kick[k]) * 10) / 10;
+  });
+  const series = (f) => Array.from({ length: n }, (_, i) => f(i));
+  const s = (label, v, agg = "sum", unit = "") => ({ label, unit, agg, v });
+  const fig = (label, value, unit = "") => ({ label, value, unit });
+  const base = { range: range ?? "6h", t0, step, generated: t };
+  if (kind === "aws") {
+    const rpm = wave(24, 8);
+    const inv = rpm.map((v) => Math.round(v * per));
+    const lines = [
+      "REPORT RequestId: 3f1c… Duration: 23.41 ms Billed Duration: 61 ms Memory Size: 128 MB Max Memory Used: 31 MB",
+      "log failed: DynamoDB ProvisionedThroughputExceededException: The level of configured provisioned throughput for the table was exceeded",
+      "metrics: CloudWatch Duration: ThrottlingException: Rate exceeded",
+      "thread 'main' panicked at src/bin/lambda.rs:362: called `Option::unwrap()` on a `None` value",
+      "START RequestId: 9a20… Version: $LATEST",
+    ];
+    const terms = (q ?? "").replace(/\?/g, " ").split(/\s+/).filter(Boolean);
+    const logs = Array.from({ length: 24 }, (_, i) => ({ ts: t - secs + 900 * i + 37, stream: `2026/11/08/[$LATEST]${hex(32)}`, message: lines[i % lines.length] }))
+      .filter((r) => !terms.length || terms.some((w) => r.message.includes(w)));
+    const tbl = (name) => [`${name} reads / s`, `${name} writes / s`];
+    return { ...base, rpm: { label: "Lambda invocations per minute", v: rpm, anomalies: spikes },
+      panels: [
+        { title: "Lambda", series: [s("Invocations", inv), s("Errors", series((i) => (spikes.includes(i) ? 3 : rnd() < 0.02 ? 1 : 0))),
+          s("Throttles", series(() => 0)), s("Duration p50", series(() => 20 + rnd() * 6), "max", "ms"),
+          s("Duration p99", series((i) => 48 + rnd() * 20 + (spikes.includes(i) ? 140 : 0)), "max", "ms"), s("Concurrent executions", series((i) => (spikes.includes(i) ? 4 : 1 + Math.round(rnd()))), "max")] },
+        { title: "DynamoDB", series: [
+          ...["devices", "events", "index", "licences"].flatMap((name, k) => tbl(name).map((label, w) => s(label, series((i) => Math.round((rnd() * (w ? 3 : 4) + (spikes.includes(i) && k === 1 ? 6 : 0)) * 10) / 10), "max", "units"))),
+          s("Throttled requests (all tables)", series((i) => (i === spikes[1] ? 2 : 0)))] },
+        { title: "CloudFront (fallback path)", series: [s("Requests", series(() => Math.round(rnd() * 3))), s("4xx rate", series(() => rnd() * 4), "max", "%"), s("5xx rate", series(() => 0), "max", "%")] },
+      ],
+      quotas: [
+        { label: "Lambda requests this month", used: 412_380, limit: 1e6, unit: "requests" },
+        { label: "DynamoDB read capacity provisioned", used: 22, limit: 25, unit: "RCU" },
+        { label: "DynamoDB write capacity provisioned", used: 23, limit: 25, unit: "WCU" },
+        { label: "CloudFront requests this month", used: 18_220, limit: 1e7, unit: "requests" },
+      ],
+      logs };
+  }
+  const rpm = wave(70, 22, [5, 7]);
+  const fw = [["block", "firewallCustom", 212], ["block", "ratelimit", 96], ["managed_challenge", "firewallManaged", 31], ["drop", "l7ddos", 12], ["log", "firewallManaged", 4]];
+  const ips = [["192.0.2.199", "64500", "US", 141], ["198.51.100.77", "64501", "DE", 88], ["203.0.113.5", "64502", "SG", 47], ["192.0.2.31", "64500", "US", 29], [OFFICE, "64511", "IN", 6]];
+  const table = (title, columns, rows) => ({ title, columns, rows });
+  const col = (key, label, more = {}) => ({ key, label, ...more });
+  return { ...base, rpm: { label: "Edge requests per minute", v: rpm, anomalies: spikes },
+    panels: [
+      { title: "Edge traffic", series: [s("Requests", rpm.map((v) => Math.round(v * per)))] },
+      { title: "Security events", series: [fig("Events", 355), fig("Blocked or challenged", 351), fig("DDoS mitigations", 12)] },
+      { title: "Worker", series: [fig("Requests", Math.round(rpm.reduce((a, b) => a + b, 0) * per * 0.94)), fig("Errors", 7), fig("Subrequests", 1_204), fig("CPU p50", 1.4, "ms"), fig("CPU p99", 6.8, "ms")] },
+    ],
+    quotas: [{ label: "Worker requests today (UTC)", used: 83_610, limit: 1e5, unit: "requests" }],
+    tables: [
+      table("Security events by action", [col("action", "Action"), col("source", "Source"), col("count", "Events", { num: true })], fw.map(([action, source, count]) => ({ action, source, count }))),
+      table("Top IPs", [col("ip", "IP", { mono: true }), col("asn", "ASN", { mono: true }), col("country", "Country"), col("count", "Events", { num: true })], ips.map(([ip, asn, country, count]) => ({ ip, asn, country, count }))),
+      table("Top ASNs", [col("asn", "ASN", { mono: true }), col("count", "Events", { num: true })], [["64500", 170], ["64501", 88], ["64502", 47], ["64511", 6]].map(([asn, count]) => ({ asn, count }))),
+      table("Status code", [col("key", "Status code"), col("count", "Requests", { num: true })], [["200", 24_120], ["401", 310], ["429", 96], ["403", 41], ["404", 12]].map(([key, count]) => ({ key, count }))),
+      table("Cache status", [col("key", "Cache status"), col("count", "Requests", { num: true })], [["dynamic", 24_410], ["none", 169]].map(([key, count]) => ({ key, count }))),
+      table("Country", [col("key", "Country"), col("count", "Requests", { num: true })], [["IN", 15_002], ["US", 4_870], ["DE", 2_210], ["GB", 1_480], ["SG", 1_017]].map(([key, count]) => ({ key, count }))),
+    ] };
+}
+
 const today = new Date().toISOString().slice(0, 10);
-function route(method, path, day) {
+function route(method, path, params) {
+  const day = params.get("day");
   const [a, b, c] = path.split("/").map(decodeURIComponent);
+  if (a === "metrics") return [200, metrics(b, params.get("range"), params.get("q"))];
   const onDay = (rows) => (!day || day === today ? rows : []);
   if (method === "POST") {
     const d = devices.find((x) => x.device_id === b);
@@ -117,7 +190,7 @@ window.fetch = async (input, init = {}) => {
   const url = new URL(String(input), location.origin);
   if (url.origin !== location.origin || !url.pathname.startsWith("/admin/")) return real(input, init);
   await new Promise((r) => setTimeout(r, 120));
-  const [status, body] = route(init.method ?? "GET", url.pathname.slice(7), url.searchParams.get("day"));
+  const [status, body] = route(init.method ?? "GET", url.pathname.slice(7), url.searchParams);
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 };
 
