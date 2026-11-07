@@ -56,6 +56,13 @@ Each item lists what to check and how. "Agent" means the service running as SYST
 
 - [ ] **Terraform apply** of `infra/cloudflare` and `infra/aws` on real accounts. Only
   `terraform validate` has run.
+- [ ] **Free plan accepts the custom rule's header check.** `terraform apply` on a real free-plan zone
+  must accept `any(http.request.headers.names[*] eq "x-tt-sig")`. `terraform validate` only checks
+  structure, not which fields each plan allows. If it's refused, fall back to the Worker's own
+  signature check (costs Worker quota under a flood).
+- [ ] **Free plan accepts the rate-limit counting.** The same apply must accept counting by
+  `cf.colo.id` + `ip.src` (IP plus data centre). If it's refused, adjust `infra/cloudflare/main.tf`
+  to what the free plan allows.
 - [ ] **Cloudflare custom rule:** requests to `api.<domain>/v1/*` without the signature headers, or not
   POST, are blocked at the edge (Security events show them) and never reach the Worker.
 - [ ] **Blocked-IP list:** an IP added to `telltale_blocked` gets 403 from Cloudflare within seconds.
