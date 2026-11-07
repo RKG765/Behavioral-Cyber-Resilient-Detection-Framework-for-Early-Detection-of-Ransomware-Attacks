@@ -4,6 +4,8 @@
 var BLOCKED = __BLOCKED_IPS__;
 // x-amz-content-sha256 is required by CloudFront OAC for POSTs to a Lambda function URL.
 var SCORE_HEADERS = ["x-tt-device", "x-tt-time", "x-tt-nonce", "x-tt-sig", "x-amz-content-sha256"];
+// POST routes that only arrive from Cloudflare (Worker); /admin/* comes from the console's Pages Function.
+var VIA_CLOUDFLARE = { "/v1/register": true, "/v1/report": true, "/internal/log": true };
 
 function deny(code) {
   return { statusCode: code, statusDescription: code === 403 ? "Forbidden" : "Not Found" };
@@ -12,15 +14,17 @@ function deny(code) {
 function handler(event) {
   var req = event.request;
   var h = req.headers;
+  var post = req.method === "POST";
   if (BLOCKED[event.viewer.ip]) return deny(403);
-  if (req.method !== "POST") return deny(404);
-  if (req.uri === "/v1/score") {
+  if (post && req.uri === "/v1/score") {
     for (var i = 0; i < SCORE_HEADERS.length; i++) {
       if (!h[SCORE_HEADERS[i]]) return deny(403);
     }
     return req;
   }
-  // Register only arrives from the Cloudflare Worker; the Lambda checks the secret's value.
-  if (req.uri === "/v1/register" && h["x-tt-origin-secret"] && h["x-amz-content-sha256"]) return req;
+  // Everything else needs the Cloudflare-only secret (the Lambda checks its value) and, on POST, the body hash.
+  if (!h["x-tt-origin-secret"] || (post && !h["x-amz-content-sha256"])) return deny(404);
+  if (post && VIA_CLOUDFLARE[req.uri]) return req;
+  if ((post || req.method === "GET") && req.uri.indexOf("/admin/") === 0) return req;
   return deny(404);
 }

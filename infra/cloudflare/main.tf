@@ -1,9 +1,11 @@
-# Cloudflare edge protection for the Telltale API (docs/PROD_ARCHITECTURE.md sections 3.1 and 7).
-# The Worker, its KV namespace and secrets are deployed with wrangler (worker/wrangler.toml);
-# this file holds the zone's security settings only.
+# Cloudflare side of Telltale (docs/PROD_ARCHITECTURE.md sections 3.1, 6.4 and 7): the zone's
+# security settings, and the SOC console's Pages project behind Cloudflare Access (admin login layer 1).
+# The Worker, its KV namespace and secrets, and the console's files and secrets are deployed with
+# wrangler (worker/wrangler.toml, infra/README.md).
 #
-#   export CLOUDFLARE_API_TOKEN=...   # token with Zone: Edit (settings, WAF, rulesets) + Account: Filter Lists Edit
-#   terraform init && terraform apply -var zone_id=... -var account_id=... -var api_hostname=api.example.com
+#   export CLOUDFLARE_API_TOKEN=...   # Zone: Zone Settings, Zone WAF, DNS Edit; Account: Account Filter Lists,
+#                                     # Cloudflare Pages, Access: Apps and Policies, Zero Trust Edit
+#   terraform init && terraform apply -var-file=cloudflare.tfvars   # git-ignored, see infra/README.md
 
 terraform {
   required_providers {
@@ -27,6 +29,16 @@ variable "account_id" {
 variable "api_hostname" {
   description = "Hostname the Worker serves, e.g. api.example.com"
   type        = string
+}
+
+variable "admin_hostname" {
+  description = "Where the SOC console is served, e.g. admin.example.com"
+  type        = string
+}
+
+variable "admin_emails" {
+  description = "Who Cloudflare Access lets reach the console (each still needs a Cognito login)"
+  type        = list(string)
 }
 
 variable "rate_limit_per_10s" {
@@ -57,8 +69,8 @@ resource "cloudflare_ruleset" "firewall" {
       enabled     = true
     },
     {
-      description = "API takes only signed POSTs to /v1/score and /v1/register"
-      expression  = "(http.host eq \"${var.api_hostname}\" and not (http.request.method eq \"POST\" and http.request.uri.path in {\"/v1/score\" \"/v1/register\"} and any(http.request.headers.names[*] eq \"x-tt-sig\") and any(http.request.headers.names[*] eq \"x-tt-device\")))"
+      description = "API takes only signed POSTs to /v1/score, /v1/register and /v1/report"
+      expression  = "(http.host eq \"${var.api_hostname}\" and not (http.request.method eq \"POST\" and http.request.uri.path in {\"/v1/score\" \"/v1/register\" \"/v1/report\"} and any(http.request.headers.names[*] eq \"x-tt-sig\") and any(http.request.headers.names[*] eq \"x-tt-device\")))"
       action      = "block"
       enabled     = true
     },
@@ -75,7 +87,7 @@ resource "cloudflare_ruleset" "rate_limit" {
   rules = [
     {
       description = "Per-IP limit on the API"
-      expression  = "(http.request.uri.path in {\"/v1/score\" \"/v1/register\"})"
+      expression  = "(http.request.uri.path in {\"/v1/score\" \"/v1/register\" \"/v1/report\"})"
       action      = "block"
       enabled     = true
       ratelimit = {
@@ -129,3 +141,70 @@ resource "cloudflare_zone_setting" "hsts" {
 
 # The Cloudflare Free Managed Ruleset and unmetered DDoS protection are on by default on
 # every zone; nothing to configure (checked in docs/INTEGRATION_TESTS.md).
+
+# ───────────── SOC console (plan 6.4): Pages, admin.<domain>, Access in front ─────────────
+# Direct-upload project (no Git link): `npx wrangler pages deploy console --project-name telltale-console`.
+resource "cloudflare_pages_project" "console" {
+  account_id        = var.account_id
+  name              = "telltale-console"
+  production_branch = "main"
+}
+
+resource "cloudflare_pages_domain" "console" {
+  account_id   = var.account_id
+  project_name = cloudflare_pages_project.console.name
+  name         = var.admin_hostname
+}
+
+# Through the API, a Pages custom domain needs its own CNAME (the dashboard adds it for you).
+resource "cloudflare_dns_record" "console" {
+  zone_id = var.zone_id
+  name    = var.admin_hostname
+  type    = "CNAME"
+  content = cloudflare_pages_project.console.subdomain
+  proxied = true
+  ttl     = 1
+}
+
+resource "cloudflare_zero_trust_list" "admins" {
+  account_id  = var.account_id
+  name        = "telltale_admins"
+  type        = "EMAIL"
+  description = "Who may reach the Telltale SOC console"
+  items       = [for e in var.admin_emails : { value = e }]
+}
+
+resource "cloudflare_zero_trust_access_policy" "admins" {
+  account_id = var.account_id
+  name       = "Telltale admins"
+  decision   = "allow"
+  include    = [{ email_list = { id = cloudflare_zero_trust_list.admins.id } }]
+}
+
+# The pages.dev names are covered too, so the console is never reachable around Access.
+resource "cloudflare_zero_trust_access_application" "console" {
+  account_id       = var.account_id
+  name             = "Telltale SOC console"
+  type             = "self_hosted"
+  session_duration = "8h"
+  destinations = [
+    { type = "public", uri = var.admin_hostname },
+    { type = "public", uri = cloudflare_pages_project.console.subdomain },
+    { type = "public", uri = "*.${cloudflare_pages_project.console.subdomain}" }, # preview deployments
+  ]
+  policies = [{ id = cloudflare_zero_trust_access_policy.admins.id, precedence = 1 }]
+}
+
+output "access_aud" {
+  description = "ACCESS_AUD for the admin Lambda (infra/aws access_aud)"
+  value       = cloudflare_zero_trust_access_application.console.aud
+}
+
+output "blocked_list_id" {
+  description = "CF_LIST_ID for the admin Lambda (infra/aws cf_list_id)"
+  value       = cloudflare_list.blocked.id
+}
+
+output "console_pages_subdomain" {
+  value = cloudflare_pages_project.console.subdomain
+}

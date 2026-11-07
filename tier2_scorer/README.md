@@ -11,7 +11,7 @@ by a registered device key, and every reply is signed by the server (build step 
 
 ## Protocol (v1)
 
-**Requests** (`/v1/score`, `/v1/register`) carry these headers:
+**Device requests** (`/v1/score`, `/v1/register`, `/v1/report`) carry these headers:
 
 | Header | Value |
 |---|---|
@@ -42,6 +42,21 @@ or doesn't echo its nonce.
 Reply: `{"device_id", "nonce"}`. Registering is idempotent. It takes one licence seat the first time
 and publishes `device_id -> {"pk", "status"}` to Workers KV.
 
+**`POST /v1/report`** (Cloudflare only, signed like score), body
+`{"name", "path", "sha256", "reason", "reasons": [..]}`: a file the user sent for review from the ask
+dialog. Saved to the events table (90 days); the console's Reports view lists it.
+
+**`POST /internal/log`** (Worker only, origin secret, unsigned): one request-log row per Worker
+request. Verified 200s also update the IP history and the device's `last_seen`.
+
+**`GET|POST /admin/*`** (console only: Pages Function → CloudFront, origin secret): needs **both**
+the Cloudflare Access JWT (`cf-access-jwt-assertion`) and the Cognito ID token (`x-tt-admin-token`),
+for the same email. Roles come from Cognito groups: `viewer` reads, `analyst` also reads reports,
+`admin` also revokes/restores devices and blocks/unblocks IPs, and those POSTs need a login in the
+last 5 minutes. Every action is audited. Reads: `overview`, `devices`, `devices/<id>`, `ips`,
+`events`, `reports`, `audit` (those three take `?day=YYYY-MM-DD`), `licences`. Actions:
+`devices/<id>/revoke|restore`, `ips/<ip>/block|unblock`.
+
 **Errors:** 400 bad body, 401 bad or missing signature, stale time, replay or unknown device,
 403 revoked device or licence invalid/full, 429 more than 60 requests per device per minute,
 502 edge publish failed (retry register). Error replies are not signed.
@@ -58,14 +73,35 @@ and publishes `device_id -> {"pk", "status"}` to Workers KV.
 3. **DynamoDB (provisioned mode):**
    - `DEVICES_TABLE`, key `device_id` (S): items `{device_id, pk, kind, status, licence_hash, first_ip, created_at}`.
    - `LICENCES_TABLE`, key `licence_hash` (S): items `{licence_hash, seats (N), used (N)}`.
-   Licence keys are stored only as their SHA-256 hex. To add one:
+   - `EVENTS_TABLE`, key `pk` (S) + `sk` (S), TTL attribute `expires`: request log (`e#<day>`),
+     reports (`r#<day>`) and audit (`a#<day>`), each row kept 90 days.
+   - `INDEX_TABLE`, key `pk` (S) + `sk` (S): IP history, `d#<device>` → `ip#<ip>` and back.
+   `infra/aws` creates all four within the free 25 RCU / 25 WCU. Licence keys are stored only as
+   their SHA-256 hex. To add one:
    ```bash
    aws dynamodb put-item --table-name <LICENCES_TABLE> --item '{"licence_hash":{"S":"<sha256 hex of the key>"},"seats":{"N":"3"},"used":{"N":"0"}}'
    ```
-4. **Lambda env:** `DEVICES_TABLE`, `LICENCES_TABLE`, `RESPONSE_SIGNING_SEED`, `ORIGIN_SECRET`,
-   `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE`, `CF_API_TOKEN` (a Cloudflare token with *Workers KV Storage:
-   Edit* only). The IAM role needs `dynamodb:GetItem`, `PutItem` and `UpdateItem` on the two tables.
-5. **Agent env:** `EDR_CLOUD_ENDPOINTS=https://api.<domain>,https://<id>.cloudfront.net` (primary
+4. **Lambda env** (`infra/aws` sets all of it):
+
+   | Variable | Value |
+   |---|---|
+   | `DEVICES_TABLE`, `LICENCES_TABLE`, `EVENTS_TABLE`, `INDEX_TABLE` | table names |
+   | `RESPONSE_SIGNING_SEED`, `ORIGIN_SECRET` | from steps 1 and 2 |
+   | `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE`, `CF_API_TOKEN` | KV publish; the token has *Workers KV Storage: Edit* only |
+   | `CF_LIST_ID`, `CF_LISTS_TOKEN` | the `telltale_blocked` IP list; the token has *Account Filter Lists: Edit* only |
+   | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Zero Trust team domain (`<team>.cloudflareaccess.com`) and the console's Access application audience tag |
+   | `COGNITO_ISSUER`, `COGNITO_CLIENT_ID` | `https://cognito-idp.<region>.amazonaws.com/<pool id>` and the console's app client |
+
+   The IAM role needs `dynamodb:GetItem`, `PutItem`, `UpdateItem` and `Scan` on devices and
+   licences, and `Query`, `Scan`, `PutItem` and `UpdateItem` on events and index.
+5. **Admins:** add the email to `admin_emails` in `infra/cloudflare` (Access), then create the
+   Cognito user and give it a role:
+   ```bash
+   aws cognito-idp admin-create-user --user-pool-id <pool id> --username you@example.com --user-attributes Name=email,Value=you@example.com Name=email_verified,Value=true
+   aws cognito-idp admin-add-user-to-group --user-pool-id <pool id> --username you@example.com --group-name admin
+   ```
+   On first login, set a password (14+ characters); managed login then offers to add a passkey.
+6. **Agent env:** `EDR_CLOUD_ENDPOINTS=https://api.<domain>,https://<id>.cloudfront.net` (primary
    first), `EDR_LICENCE_KEY`, `EDR_SERVER_PUBKEY`. Without these the agent keeps using the local
    `server.py`.
 

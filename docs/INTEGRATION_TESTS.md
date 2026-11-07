@@ -102,3 +102,57 @@ Each item lists what to check and how. "Agent" means the service running as SYST
 - [ ] **Packaging:** `tkinter` is included in the Nuitka build of the helper.
 - [ ] **Time to decide:** measure how long real users take to answer. The app keeps running until
   then; suspension, the safer option, is not built.
+
+## Step 5: admin SOC console
+
+Built: the Lambda's `/v1/report`, `/internal/log` and `/admin/*`, the Worker's request log, the
+console and its Pages Function, and the Terraform in `infra/` (tables, IAM, Cognito, the `/admin/*`
+CloudFront behaviour, Pages, Access). Tested: Rust, Worker, agent and edge-filter unit tests,
+`terraform validate` for both folders, and the console rendered against local sample data. Nothing
+below has run on real accounts.
+
+- [ ] **Terraform apply** of the step-5 resources in both folders: the two new tables, the Cognito
+  pool, client, groups, domain and managed-login branding, the admin origin request policy and
+  `/admin/*` behaviour, the Pages project, domain and CNAME, the Access list, policy and application.
+- [ ] **DynamoDB free tier:** the four tables total 22 RCU / 23 WCU, and the account has no other
+  provisioned tables in that region (the 25 / 25 allowance is per region, account-wide).
+- [ ] **Write capacity under load:** every Worker request writes a log row (plus two index rows and a
+  device update when verified). At 10 WCU on events, watch for throttling in a busy minute; the plan's
+  SQS buffer is not built. Throttled log writes are dropped, scoring is not affected.
+- [ ] **TTL:** `telltale_events` rows disappear about 90 days after `expires` (DynamoDB deletes within
+  a few days of expiry). `telltale_index` rows have no TTL yet.
+- [ ] **Cognito Essentials tier** is accepted, and stays at $0 for the admin user count.
+- [ ] **Passkey sign-in** through managed login v2: an admin can add a passkey after the first
+  password sign-in and then sign in with it. The relying party ID is the `amazoncognito.com`
+  prefix domain.
+- [ ] **TOTP enrolment:** with MFA set to optional (required for passkeys), confirm managed login
+  lets an admin set up an authenticator app. If it doesn't, the console needs an enrolment step.
+- [ ] **Password-only login:** MFA is optional, so a user without a passkey or TOTP can sign in with
+  just a password, and the Lambda doesn't check how they signed in. Decide whether to require it
+  (for example an `amr` / pre-token check).
+- [ ] **Admin-only accounts:** the managed-login page offers no sign-up and no self-service password
+  reset.
+- [ ] **Token lifetimes:** ID tokens expire after 15 minutes. Step-up (`prompt=login`) gives a fresh
+  `auth_time`, and admin POSTs older than 5 minutes get 401.
+- [ ] **PKCE from the browser:** the console's token exchange at `<cognito domain>/oauth2/token` works
+  from `admin.<domain>` (CORS) with the CSP in `console/_headers`.
+- [ ] **Access in front of Pages:** `admin.<domain>`, `telltale-console.pages.dev` and preview URLs
+  all ask for the Access login. Only `admin_emails` get through.
+- [ ] **Access JWT reaches the Lambda:** the Pages Function receives `cf-access-jwt-assertion` and
+  forwards it, the `/admin/*` behaviour passes it on with `x-tt-admin-token` and the query string,
+  and the Lambda accepts it against `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`.
+- [ ] **Same person on both layers:** an Access login as A plus a Cognito login as B gets 401.
+- [ ] **Roles:** `viewer` can't see reports or act, `analyst` sees reports, `admin` can revoke,
+  restore, block and unblock. Each action shows up in the audit view.
+- [ ] **Revoke / restore:** the device's KV entry changes, and the Worker refuses (or accepts) it
+  within KV's propagation time.
+- [ ] **IP block:** the IP is added to `telltale_blocked` with the `CF_LISTS_TOKEN` and gets 403 at
+  Cloudflare. The AWS fallback still uses the `blocked_ips` Terraform variable.
+- [ ] **Edge filter:** in the real CloudFront runtime, `/v1/report`, `/internal/log` and `/admin/*`
+  pass only with the origin secret (and the body hash on POST).
+- [ ] **Custom rule allows `/v1/report`:** a signed report through `api.<domain>` reaches the Worker
+  (the rule and the rate limit now include it).
+- [ ] **Request log:** Worker requests appear in the Events view with IP, country and status, and
+  rejected floods are sampled per IP rather than logged one by one.
+- [ ] **Agent reports:** Send report in the dialog reaches the Reports view, and an offline report is
+  uploaded from the outbox later.

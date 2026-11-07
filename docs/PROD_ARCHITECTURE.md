@@ -649,6 +649,17 @@ other processes. Plan beta testing around that.
    reports saved locally. Tested: agent t32 / t33 and a dialog build check. Suspension is not built.*
 5. **Admin SOC console:** SQS → log writer, admin API, Access + Cognito (passkeys, roles, step-up), the
    views in 6.1, IP blocking.
+   *Status: built. The Lambda has `/v1/report`, `/internal/log` and `/admin/*` (Access JWT and Cognito
+   ID token for the same email, roles, 5-minute step-up, audit). The Worker logs requests, and
+   `console/` is served from Pages behind Access. The Terraform in [`infra/`](../infra/README.md) has
+   the tables, IAM, Cognito (Essentials, passkeys + TOTP, admin-created users), the `/admin/*`
+   CloudFront behaviour, Pages and Access, and `terraform validate` passes for both clouds. Tested:
+   unit tests (Rust, Worker, agent, edge filter) and the console against local sample data. Changes
+   found while building: logs are written directly, without SQS (10 WCU on the events table); the
+   Cloudflare custom rule now allows `/v1/report`; `/admin/*` has its own CloudFront origin request
+   policy (the API one is at the 10-header limit); MFA is optional, which Cognito requires for
+   passkeys. The AWS fallback's IP block list is still a Terraform variable. Real-account checks are
+   in [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 6. **Cloud observability:** metrics proxy with caching, AWS and Cloudflare pages, quota gauges, alerts.
 7. **Obfuscation and packaging:** `obfstr`, TLS pinning, Nuitka builds, Windows service, Inno / WiX
    installer, self-signed signing, signed updates.
