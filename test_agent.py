@@ -728,6 +728,33 @@ def t33_ask_mode_run_anyway_and_forged_decisions():
     assert p.poll() is None and not h.due_alerts({}, time.time())
 
 
+@test
+def t34_reports_upload_or_wait_in_outbox():
+    """(#34) Send report uploads via the cloud client; offline reports wait and go with the next one"""
+    import json
+    reset_agent_state(mode="ask")
+    _ask_dirs()
+    alert = {"name": "x.exe", "path": "", "reason": "score=0.97", "reasons": ["Ran an encoded (base64) command"]}
+
+    assert agent.send_report(alert) is False, "no cloud client configured -> kept"
+    class Cloud:
+        def __init__(self, fail): self.fail, self.sent = fail, []
+        def report(self, body):
+            if self.fail: raise agent.CloudUnavailable("offline")
+            self.sent.append(body)
+    agent.cloud_client = Cloud(fail=True)
+    assert agent.send_report(alert) is False
+    with open(agent.REPORTS_OUTBOX, encoding="utf-8") as f:
+        assert len(f.readlines()) == 2, "both reports wait in the outbox"
+
+    agent.cloud_client = Cloud(fail=False)
+    assert agent.send_report(alert) is True
+    assert len(agent.cloud_client.sent) == 3 and agent.cloud_client.sent[0]["reasons"] == alert["reasons"]
+    with open(agent.REPORTS_OUTBOX, encoding="utf-8") as f:
+        assert f.read() == "", "outbox empty once everything is sent"
+    agent.cloud_client = None
+
+
 # ───────────────────────── summary ─────────────────────────
 for p in SPAWNED:
     try: p.kill()

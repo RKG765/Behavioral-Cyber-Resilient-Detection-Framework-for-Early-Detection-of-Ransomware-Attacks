@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telltale SOC</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip" href="#view">Skip to content</a>
+  <header class="top">
+    <span class="brand">Telltale SOC</span>
+    <span id="who" class="muted"></span>
+    <button id="logout" class="btn ghost" hidden>Sign out</button>
+  </header>
+  <nav class="side" aria-label="Sections">
+    <a href="#/overview">Overview</a>
+    <a href="#/devices">Devices</a>
+    <a href="#/ips">IPs</a>
+    <a href="#/log">Live log</a>
+    <a href="#/rejected">Rejected</a>
+    <a href="#/reports">Reports</a>
+    <a href="#/licences">Licences</a>
+    <a href="#/audit">Audit</a>
+  </nav>
+  <main id="view" tabindex="-1"></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

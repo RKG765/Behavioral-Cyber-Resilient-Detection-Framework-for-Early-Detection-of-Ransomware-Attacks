@@ -852,6 +852,12 @@ class CloudClient:
             self.register()
         return self._post("/v1/score", {"features": features})
 
+    def report(self, body):
+        """A report the user chose to send (#34). Only via the primary (Cloudflare)."""
+        if not self.registered:
+            self.register()
+        return self._post("/v1/report", body, failover=False)
+
     def _post(self, path, body, failover=True):
         raw = json.dumps(body, separators=(",", ":")).encode()
         body_hash = hashlib.sha256(raw).hexdigest()
@@ -1543,6 +1549,38 @@ class GreyZoneMonitor:
         self._stop.set()
 
 
+def send_report(alert):
+    """
+    (#34) Upload a report the user chose to send, plus any queued earlier. Anything that can't
+    be sent now stays in REPORTS_OUTBOX for the next attempt. Returns True if this one was sent.
+    """
+    sha = None
+    try:
+        sha = CustomWhitelist._compute_sha256(alert["path"]) if alert.get("path") else None
+    except OSError:
+        pass
+    report = {"name": alert["name"], "path": alert.get("path") or "", "sha256": sha or "",
+              "reason": alert.get("reason", ""), "reasons": alert.get("reasons", [])}
+    queued = []
+    if os.path.exists(REPORTS_OUTBOX):
+        with open(REPORTS_OUTBOX, encoding="utf-8") as f:
+            queued = [json.loads(line) for line in f if line.strip()]
+    pending = queued + [report]
+    left = pending
+    if cloud_client is not None:
+        left = []
+        for r in pending:
+            try:
+                cloud_client.report(r)
+            except Exception as e:
+                logger.warning(f"[CLOUD] report not sent ({e}) -- kept for later")
+                left.append(r)
+    os.makedirs(os.path.dirname(REPORTS_OUTBOX), exist_ok=True)
+    with open(REPORTS_OUTBOX, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(r) + "\n" for r in left)
+    return report not in left
+
+
 class DecisionWatcher:
     """
     (#34) Applies the user's answers from telltale_helper.py. A decision names an alert the
@@ -1586,9 +1624,8 @@ class DecisionWatcher:
             a = json.load(f)
         pid, name = a["pid"], a["name"]
         if choice == "report":
-            with open(REPORTS_OUTBOX, "a", encoding="utf-8") as f:
-                f.write(json.dumps(a) + "\n")
-            logger.info(f"[USER REPORT] {name} PID:{pid} -- report saved for upload")
+            sent = send_report(a)
+            logger.info(f"[USER REPORT] {name} PID:{pid} -- {'sent' if sent else 'saved for upload'}")
             return   # the user still picks Close or Run in the same dialog
         if choice == "close":
             try:

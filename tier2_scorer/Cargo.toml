@@ -12,7 +12,8 @@ crate-type = ["rlib", "cdylib"]
 # The Lambda binary only; the library and the WASM build stay dependency-free.
 lambda = [
     "dep:lambda_http", "dep:tokio", "dep:serde", "dep:serde_json", "dep:aws-config", "dep:aws-sdk-dynamodb",
-    "dep:reqwest", "dep:p256", "dep:ed25519-dalek", "dep:sha2", "dep:base64",
+    "dep:reqwest", "dep:p256", "dep:ed25519-dalek", "dep:sha2", "dep:base64", "dep:jsonwebtoken",
+    "dep:getrandom",
 ]
 
 [dependencies]
@@ -22,7 +23,9 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
 aws-sdk-dynamodb = { version = "1", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
+jsonwebtoken = { version = "9", optional = true }
+getrandom = { version = "0.2", optional = true }
 p256 = { version = "0.13", features = ["ecdsa"], optional = true }
 ed25519-dalek = { version = "2", optional = true }
 sha2 = { version = "0.10", optional = true }

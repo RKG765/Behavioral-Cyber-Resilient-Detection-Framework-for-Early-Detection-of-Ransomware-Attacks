@@ -6,6 +6,8 @@
 use std::sync::OnceLock;
 
 #[cfg(feature = "lambda")]
+pub mod admin;
+#[cfg(feature = "lambda")]
 pub mod auth;
 
 pub const FEATURE_DIM: usize = 99;

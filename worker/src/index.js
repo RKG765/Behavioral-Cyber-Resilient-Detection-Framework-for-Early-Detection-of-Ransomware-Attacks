@@ -1,24 +1,27 @@
-// Cloudflare Worker, the primary Tier-2 entry point (plan sections 3.1 and 4.1).
+// Cloudflare Worker, the primary Tier-2 entry point (plan sections 3.1, 4.1 and 6.1).
 //   POST /v1/score     signed by the device key -> signed {"verdict", "request_id", "nonce"}
 //   POST /v1/register  forwarded to the AWS API with the Cloudflare-only origin secret
-// Bindings (wrangler.toml): KV DEVICES (device_id -> {"pk", "status"}), var AWS_API_URL,
+//   POST /v1/report    forwarded the same way (the Lambda checks the device signature)
+// Every scored request is logged to AWS in the background for the SOC console.
+// Bindings (wrangler.toml): KV DEVICES (device_id -> {"pk", "status", "kind"}), var AWS_API_URL,
 // secrets RESPONSE_SIGNING_SEED and ORIGIN_SECRET.
 import scorerModule from "../../tier2_scorer/target/wasm32-unknown-unknown/release/tier2_scorer.wasm";
 import { signedJson, unb64, verifyRequest } from "./auth.js";
+import { logEvent, sampleReject, sendLog, toAws } from "./log.js";
 
 let scorer; // instantiated once per isolate
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-async function score(request, env) {
+async function score(request, env, log) {
   const body = await request.arrayBuffer();
   const device = request.headers.get("x-tt-device") ?? "";
   const record = /^[0-9a-f]{32}$/.test(device) ? await env.DEVICES.get(device, { type: "json", cacheTtl: 60 }) : null;
-  if (!record) return json({ error: "unauthorized" }, 401);
-  if (record.status !== "active") return json({ error: "revoked" }, 403);
+  if (!record) return log.reject(json({ error: "unauthorized" }, 401), "unknown device");
+  if (record.status !== "active") return log.reject(json({ error: "revoked" }, 403), "revoked");
 
   const auth = await verifyRequest(request.headers, "POST", "/v1/score", body, unb64(record.pk), Date.now() / 1000);
-  if (auth.error) return json({ error: auth.error }, auth.status);
+  if (auth.error) return log.reject(json({ error: auth.error }, auth.status), auth.error);
 
   let features;
   try {
@@ -32,26 +35,30 @@ async function score(request, env) {
   scorer ??= (await WebAssembly.instantiate(scorerModule)).exports;
   new Float32Array(scorer.memory.buffer, scorer.input_ptr(), 99).set(features);
   const verdict = scorer.score() >= scorer.threshold() ? "KILL" : "BENIGN";
+  log.ok({ verified: record.kind ?? "tpm", verdict });
   return signedJson({ verdict, request_id: crypto.randomUUID(), nonce: auth.nonce }, env.RESPONSE_SIGNING_SEED);
 }
 
-async function register(request, env) {
-  const body = await request.arrayBuffer();
-  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", body))]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  const headers = new Headers(request.headers);
-  headers.set("x-tt-origin-secret", env.ORIGIN_SECRET);
-  headers.set("x-tt-client-ip", request.headers.get("cf-connecting-ip") ?? "");
-  headers.set("x-amz-content-sha256", hash); // CloudFront OAC needs the body hash for POSTs
-  return fetch(`${env.AWS_API_URL}/v1/register`, { method: "POST", headers, body });
+async function forward(request, env, path) {
+  const headers = Object.fromEntries(request.headers);
+  headers["x-tt-client-ip"] = request.headers.get("cf-connecting-ip") ?? "";
+  return toAws(env, path, await request.arrayBuffer(), headers);
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    if (request.method === "POST" && path === "/v1/score") return score(request, env);
-    if (request.method === "POST" && path === "/v1/register") return register(request, env);
+    const started = Date.now();
+    const log = {
+      ok: (fields) => ctx.waitUntil(sendLog(env, logEvent(request, { status: 200, ms: Date.now() - started, ...fields }))),
+      reject: (res, reason) => {
+        const ev = logEvent(request, { status: res.status, verified: "failed", reason, ms: Date.now() - started });
+        if (sampleReject(ev.ip, Date.now() / 1000)) ctx.waitUntil(sendLog(env, ev));
+        return res;
+      },
+    };
+    if (request.method === "POST" && path === "/v1/score") return score(request, env, log);
+    if (request.method === "POST" && (path === "/v1/register" || path === "/v1/report")) return forward(request, env, path);
     return json({ error: "not found" }, 404);
   },
 };
