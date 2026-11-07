@@ -1,0 +1,28 @@
+[package]
+name = "tier2_scorer"
+version = "0.1.0"
+edition = "2021"
+description = "Telltale Tier-2 behavioral scorer: one crate for the AWS Lambda (native) and Cloudflare Worker (WASM) builds"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# The Lambda binary only; the library and the WASM build stay dependency-free.
+lambda = ["dep:lambda_http", "dep:tokio", "dep:serde", "dep:serde_json"]
+
+[dependencies]
+lambda_http = { version = "0.13", optional = true }
+tokio = { version = "1", features = ["macros"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[[bin]]
+name = "lambda"
+required-features = ["lambda"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

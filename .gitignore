@@ -120,6 +120,9 @@ generate_presentation.py
 # Rust extension build output
 # ------------------------------------------------------------------------------
 edr_sensor/target/
+tier2_scorer/target/
+worker/.wrangler/
+worker/node_modules/
 edr_sensor/dist/
 
 # Sysmon download (install_windows.ps1) and regenerable evaluation artifacts

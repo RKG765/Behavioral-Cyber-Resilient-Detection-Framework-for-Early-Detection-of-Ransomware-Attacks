@@ -615,7 +615,8 @@ other processes. Plan beta testing around that.
 
 1. **Tier-2 scorer (Rust crate):** BatchNorm-folded weight export, forward pass, parity test. Build it
    for Lambda (native) and the Worker (WASM). Deploy `/v1/score` without auth on both and measure
-   latency.
+   latency. *Status: built and parity-checked ([`tier2_scorer/`](../tier2_scorer/README.md),
+   [`worker/`](../worker/src/index.js)); deploy waits on the domain, the AWS region and your accounts.*
 2. **Device identity:** TPM key and signing in `edr_sensor`, `/v1/register` (AWS, publishing to KV),
    signature + nonce + rate-limit checks in both scorers, signed responses, agent failover between
    endpoints.

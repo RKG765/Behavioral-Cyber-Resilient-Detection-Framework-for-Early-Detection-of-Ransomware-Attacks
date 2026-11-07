@@ -1,0 +1,7 @@
+name = "telltale-tier2"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+# Builds the Rust scorer to WASM before every `wrangler dev` / `wrangler deploy`.
+[build]
+command = "cargo build --release --lib --target wasm32-unknown-unknown --manifest-path ../tier2_scorer/Cargo.toml"
