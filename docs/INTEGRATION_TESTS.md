@@ -116,20 +116,28 @@ below has run on real accounts.
   `/admin/*` behaviour, the Pages project, domain and CNAME, the Access list, policy and application.
 - [ ] **DynamoDB free tier:** the four tables total 22 RCU / 23 WCU, and the account has no other
   provisioned tables in that region (the 25 / 25 allowance is per region, account-wide).
-- [ ] **Write capacity under load:** every Worker request writes a log row (plus two index rows and a
-  device update when verified). At 10 WCU on events, watch for throttling in a busy minute; the plan's
-  SQS buffer is not built. Throttled log writes are dropped, scoring is not affected.
+- [ ] **Log batching in the real Workers runtime:** events reach `/internal/log` in batches (one call
+  per isolate every ~2 s, or at 50 events), and `ctx.waitUntil` with a 2 s timer really keeps the
+  isolate alive until the batch is sent. Unit-tested with mocked timers only. An isolate that crashes
+  loses its unsent batch (at most 50 events); scoring is never affected.
+- [ ] **Lambda requests stay free:** at full Worker load (100K requests a day) `/internal/log` should
+  be well under 1M Lambda requests a month. Check the Lambda's invocation count after a busy day.
+- [ ] **Write capacity under load:** each batch writes one events row per request, but the index and
+  device updates only once per device + IP in the batch. Watch the CloudWatch throttle metrics on
+  `telltale_events` (10 WCU) and `telltale_index` (6 WCU) in a busy hour. A throttled batch is
+  dropped after the SDK's retries.
 - [ ] **TTL:** `telltale_events` rows disappear about 90 days after `expires` (DynamoDB deletes within
   a few days of expiry). `telltale_index` rows have no TTL yet.
 - [ ] **Cognito Essentials tier** is accepted, and stays at $0 for the admin user count.
-- [ ] **Passkey sign-in** through managed login v2: an admin can add a passkey after the first
-  password sign-in and then sign in with it. The relying party ID is the `amazoncognito.com`
-  prefix domain.
-- [ ] **TOTP enrolment:** with MFA set to optional (required for passkeys), confirm managed login
-  lets an admin set up an authenticator app. If it doesn't, the console needs an enrolment step.
-- [ ] **Password-only login:** MFA is optional, so a user without a passkey or TOTP can sign in with
-  just a password, and the Lambda doesn't check how they signed in. Decide whether to require it
-  (for example an `amr` / pre-token check).
+- [ ] **MFA required:** on first sign-in (temporary password, then a new 14+ character one), managed
+  login shows the authenticator-app setup with a QR code, and every later sign-in asks for the code.
+  A password alone never gets tokens. AWS documents this for required MFA; confirm it for an
+  admin-created user.
+- [ ] **Passkeys (not built):** they need `factor_configuration = MULTI_FACTOR_WITH_USER_VERIFICATION`
+  in the pool's WebAuthn settings, which AWS provider 6.72 doesn't expose
+  ([hashicorp/terraform-provider-aws#50110](https://github.com/hashicorp/terraform-provider-aws/issues/50110)).
+  When it does, add the block and `"WEB_AUTHN"` to the first factors, and turn on passkey MFA per user
+  (`aws cognito-idp admin-set-user-mfa-preference --web-authn-mfa-settings Enabled=true`).
 - [ ] **Admin-only accounts:** the managed-login page offers no sign-up and no self-service password
   reset.
 - [ ] **Token lifetimes:** ID tokens expire after 15 minutes. Step-up (`prompt=login`) gives a fresh
@@ -137,7 +145,11 @@ below has run on real accounts.
 - [ ] **PKCE from the browser:** the console's token exchange at `<cognito domain>/oauth2/token` works
   from `admin.<domain>` (CORS) with the CSP in `console/_headers`.
 - [ ] **Access in front of Pages:** `admin.<domain>`, `telltale-console.pages.dev` and preview URLs
-  all ask for the Access login. Only `admin_emails` get through.
+  all ask for the Access login. Only `admin_emails` get through. Cloudflare's Pages known-issues page
+  documents putting the production `pages.dev` name behind Access, and says a custom domain can't be
+  added once Access covers it (Terraform adds the domain first).
+- [ ] **Certificate validation:** the `admin.<domain>` certificate is issued, and later renewed,
+  through the Access bypass on `/.well-known/acme-challenge/*`.
 - [ ] **Access JWT reaches the Lambda:** the Pages Function receives `cf-access-jwt-assertion` and
   forwards it, the `/admin/*` behaviour passes it on with `x-tt-admin-token` and the query string,
   and the Lambda accepts it against `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`.

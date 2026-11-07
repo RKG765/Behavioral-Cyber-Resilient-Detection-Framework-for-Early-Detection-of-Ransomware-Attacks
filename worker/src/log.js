@@ -36,7 +36,22 @@ export function logEvent(request, fields) {
   };
 }
 
-// shortcut: one log call to AWS per scored request; batch (Queues / SQS) past ~30K scores a day.
-export function sendLog(env, event) {
-  return toAws(env, "/internal/log", new TextEncoder().encode(JSON.stringify(event))).catch(() => {});
+// Events wait up to FLUSH_MS in this isolate and go to AWS as one call. One call per request would pass
+// Lambda's free 1M requests a month at ~33K requests a day; SQS has the same per-message limit.
+export const FLUSH_MS = 2000;
+export const MAX_BATCH = 50; // the Lambda takes up to 100
+let pending = [];
+
+/** Queue one event; ctx.waitUntil keeps the isolate alive until its batch is sent (best effort). */
+export function queueLog(env, ctx, event) {
+  pending.push(event);
+  if (pending.length >= MAX_BATCH) ctx.waitUntil(flushLog(env));
+  else if (pending.length === 1) ctx.waitUntil(new Promise((r) => setTimeout(r, FLUSH_MS)).then(() => flushLog(env)));
+}
+
+export function flushLog(env) {
+  if (!pending.length) return Promise.resolve();
+  const batch = pending;
+  pending = [];
+  return toAws(env, "/internal/log", new TextEncoder().encode(JSON.stringify(batch))).catch(() => {});
 }

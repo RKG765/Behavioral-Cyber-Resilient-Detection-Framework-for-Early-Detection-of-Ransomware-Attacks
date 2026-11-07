@@ -193,6 +193,27 @@ resource "cloudflare_zero_trust_access_application" "console" {
     { type = "public", uri = "*.${cloudflare_pages_project.console.subdomain}" }, # preview deployments
   ]
   policies = [{ id = cloudflare_zero_trust_access_policy.admins.id, precedence = 1 }]
+  # Pages refuses a custom domain that Access already covers, so the domain is added first.
+  depends_on = [cloudflare_pages_domain.console]
+}
+
+# Pages validates (and renews) the admin. certificate over this path, so Access must let it through.
+resource "cloudflare_zero_trust_access_policy" "acme" {
+  account_id = var.account_id
+  name       = "Telltale console certificate checks"
+  decision   = "bypass"
+  include    = [{ everyone = {} }]
+}
+
+resource "cloudflare_zero_trust_access_application" "acme" {
+  account_id = var.account_id
+  name       = "Telltale console ACME challenge"
+  type       = "self_hosted"
+  destinations = [
+    { type = "public", uri = "${var.admin_hostname}/.well-known/acme-challenge/*" },
+  ]
+  policies   = [{ id = cloudflare_zero_trust_access_policy.acme.id, precedence = 1 }]
+  depends_on = [cloudflare_pages_domain.console]
 }
 
 output "access_aud" {

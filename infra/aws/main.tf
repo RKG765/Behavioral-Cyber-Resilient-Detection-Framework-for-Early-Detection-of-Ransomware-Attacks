@@ -397,20 +397,20 @@ resource "aws_cloudfront_distribution" "api" {
   }
 }
 
-# ───────────── admin login layer 2 (plan 6.4): Cognito, Essentials tier (10,000 MAU free) ─────────────
+# ───────── admin login layer 2 (plan 6.4): Cognito, Essentials tier (10,000 MAU free), MFA required ─────────
 resource "aws_cognito_user_pool" "admin" {
   name                = "telltale-admins"
   user_pool_tier      = "ESSENTIALS"
   deletion_protection = "ACTIVE"
   username_attributes = ["email"]
-  mfa_configuration   = "OPTIONAL" # Cognito allows passkey sign-in only when MFA is not "ON"
+  # Every sign-in is password + authenticator code; managed login makes new admins set one up.
+  # shortcut: no passkeys yet. They need web_authn_configuration.factor_configuration =
+  # MULTI_FACTOR_WITH_USER_VERIFICATION (passkeys then count as MFA), which provider 6.72 lacks
+  # (hashicorp/terraform-provider-aws#50110). Add "WEB_AUTHN" below once it's supported.
+  mfa_configuration = "ON"
 
   sign_in_policy {
-    allowed_first_auth_factors = ["PASSWORD", "WEB_AUTHN"]
-  }
-  web_authn_configuration {
-    relying_party_id  = "${var.cognito_domain_prefix}.auth.${var.region}.amazoncognito.com"
-    user_verification = "required"
+    allowed_first_auth_factors = ["PASSWORD"]
   }
   software_token_mfa_configuration {
     enabled = true

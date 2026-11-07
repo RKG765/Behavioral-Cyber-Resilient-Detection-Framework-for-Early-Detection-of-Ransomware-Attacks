@@ -5,8 +5,8 @@ Terraform for both clouds (plan: `docs/PROD_ARCHITECTURE.md`, build steps 3 and 
 
 | Folder | What it creates |
 |---|---|
-| `aws/` | DynamoDB tables `telltale_devices`, `telltale_licences`, `telltale_events` (TTL `expires`) and `telltale_index` (provisioned, 22 RCU / 23 WCU of the free 25 / 25; `apply` refuses more), the Lambda (IAM-auth function URL) and its env, CloudFront with Origin Access Control plus an `/admin/*` behaviour, the edge-filter CloudFront Function, the Cognito admin pool (Essentials, passkeys + TOTP, admin-created users only, groups `viewer` / `analyst` / `admin`), its public PKCE app client (15-minute tokens) and managed-login domain, a $1 budget alarm |
-| `cloudflare/` | Zone TLS settings (Full strict, TLS 1.2+, HTTPS only, HSTS), a custom rule that drops unsigned API requests, the blocked-IP list, the one free rate-limit rule, Bot Fight Mode **off**; the `telltale-console` Pages project on `admin.<domain>`, and the Access application (also covering its `pages.dev` names) with a policy for the `admin_emails` list |
+| `aws/` | DynamoDB tables `telltale_devices`, `telltale_licences`, `telltale_events` (TTL `expires`) and `telltale_index` (provisioned, 22 RCU / 23 WCU of the free 25 / 25; `apply` refuses more), the Lambda (IAM-auth function URL) and its env, CloudFront with Origin Access Control plus an `/admin/*` behaviour, the edge-filter CloudFront Function, the Cognito admin pool (Essentials, MFA required: password + authenticator app, admin-created users only, groups `viewer` / `analyst` / `admin`), its public PKCE app client (15-minute tokens) and managed-login domain, a $1 budget alarm |
+| `cloudflare/` | Zone TLS settings (Full strict, TLS 1.2+, HTTPS only, HSTS), a custom rule that drops unsigned API requests, the blocked-IP list, the one free rate-limit rule, Bot Fight Mode **off**; the `telltale-console` Pages project on `admin.<domain>`, and the Access application (also covering its `pages.dev` names) with a policy for the `admin_emails` list, plus a bypass for certificate checks |
 
 The Worker, its KV namespace and its secrets, and the console's files and secrets, are deployed with
 `wrangler`.
@@ -17,7 +17,7 @@ The Worker, its KV namespace and its secrets, and the console's files and secret
 |---|---|---|---|
 | Agent | `/v1/score` | Worker, or CloudFront directly (fallback) | Cloudflare custom rule / edge filter: POST + signature headers |
 | Agent | `/v1/register`, `/v1/report` | Worker → CloudFront | custom rule; edge filter: origin secret + body hash |
-| Worker | `/internal/log` | CloudFront | edge filter: origin secret + body hash |
+| Worker | `/internal/log` (batched, ~2 s / 50 events) | CloudFront | edge filter: origin secret + body hash |
 | Console | `/admin/*` (GET, POST) | Access → Pages Function → CloudFront | Access login; edge filter: origin secret (+ body hash on POST) |
 
 The Lambda then checks the secret's value, device signatures, and for `/admin/*` both the Access JWT

@@ -7,7 +7,7 @@
 // secrets RESPONSE_SIGNING_SEED and ORIGIN_SECRET.
 import scorerModule from "../../tier2_scorer/target/wasm32-unknown-unknown/release/tier2_scorer.wasm";
 import { signedJson, unb64, verifyRequest } from "./auth.js";
-import { logEvent, sampleReject, sendLog, toAws } from "./log.js";
+import { logEvent, queueLog, sampleReject, toAws } from "./log.js";
 
 let scorer; // instantiated once per isolate
 const json = (body, status = 200) =>
@@ -50,10 +50,10 @@ export default {
     const path = new URL(request.url).pathname;
     const started = Date.now();
     const log = {
-      ok: (fields) => ctx.waitUntil(sendLog(env, logEvent(request, { status: 200, ms: Date.now() - started, ...fields }))),
+      ok: (fields) => queueLog(env, ctx, logEvent(request, { status: 200, ms: Date.now() - started, ...fields })),
       reject: (res, reason) => {
         const ev = logEvent(request, { status: res.status, verified: "failed", reason, ms: Date.now() - started });
-        if (sampleReject(ev.ip, Date.now() / 1000)) ctx.waitUntil(sendLog(env, ev));
+        if (sampleReject(ev.ip, Date.now() / 1000)) queueLog(env, ctx, ev);
         return res;
       },
     };

@@ -125,7 +125,7 @@ before launch**; free tiers change.
 | Fallback edge filter | **CloudFront Functions** (header check, IP block list) + **Shield Standard** (automatic) | Free |
 | Register / report / config | Lambda, reached **only through Cloudflare** (checks a Cloudflare-to-AWS shared secret header and the device signature) | Lambda allowance |
 | Data | **DynamoDB, provisioned mode** (on-demand is *not* free): devices, licences, nonces (TTL 2 min), request logs and IP history (TTL 90 days) | 25 GB, 25 RCU, 25 WCU |
-| Log buffering | **SQS** → batch Lambda, so writes stay under 25 WCU. The Worker sends with a signed SQS call restricted to `sqs:SendMessage`. | 1M requests per month |
+| Log buffering | **Batches in the Worker** (every ~2 s or 50 events) → one Lambda call, which updates each device + IP once per batch. SQS was the first plan, but it is one request per message, so it would pass its free 1M a month at the Worker's 100K-a-day limit. | Lambda allowance |
 | Admin API + metrics proxy | Lambda, reached only through Cloudflare Access | Lambda allowance |
 | Admin login layer 2 | **Cognito** user pool (Essentials: passkeys + TOTP) | 10,000 MAU free, no expiry |
 | Secrets | **SSM Parameter Store** SecureString (response-signing key, Cloudflare API tokens) | Free (standard tier) |
@@ -652,13 +652,15 @@ other processes. Plan beta testing around that.
    *Status: built. The Lambda has `/v1/report`, `/internal/log` and `/admin/*` (Access JWT and Cognito
    ID token for the same email, roles, 5-minute step-up, audit). The Worker logs requests, and
    `console/` is served from Pages behind Access. The Terraform in [`infra/`](../infra/README.md) has
-   the tables, IAM, Cognito (Essentials, passkeys + TOTP, admin-created users), the `/admin/*`
+   the tables, IAM, Cognito (Essentials, MFA required, admin-created users), the `/admin/*`
    CloudFront behaviour, Pages and Access, and `terraform validate` passes for both clouds. Tested:
    unit tests (Rust, Worker, agent, edge filter) and the console against local sample data. Changes
-   found while building: logs are written directly, without SQS (10 WCU on the events table); the
-   Cloudflare custom rule now allows `/v1/report`; `/admin/*` has its own CloudFront origin request
-   policy (the API one is at the 10-header limit); MFA is optional, which Cognito requires for
-   passkeys. The AWS fallback's IP block list is still a Terraform variable. Real-account checks are
+   found while building: logs are batched in the Worker instead of SQS (see the services table);
+   the Cloudflare custom rule now allows `/v1/report`; `/admin/*` has its own CloudFront origin
+   request policy (the API one is at CloudFront's 10-header limit); Cognito login is password +
+   authenticator app with MFA required, and **passkeys wait** for the AWS Terraform provider to
+   support passkeys as MFA (with MFA optional, a password alone would get in). The AWS fallback's IP
+   block list is still a Terraform variable. Real-account checks are
    in [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 6. **Cloud observability:** metrics proxy with caching, AWS and Cloudflare pages, quota gauges, alerts.
 7. **Obfuscation and packaging:** `obfstr`, TLS pinning, Nuitka builds, Windows service, Inno / WiX

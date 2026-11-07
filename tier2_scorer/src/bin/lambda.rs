@@ -22,6 +22,7 @@ use tier2_scorer::{score, verdict, FEATURE_DIM};
 
 type Item = HashMap<String, AttributeValue>;
 const RETAIN_S: i64 = 90 * 86_400; // request logs, IPs, reports and audit entries
+const MAX_LOG_BATCH: usize = 100; // Worker sends at most 50; 100 rows fit well inside the 10 s timeout
 
 struct App {
     db: aws_sdk_dynamodb::Client,
@@ -213,7 +214,55 @@ fn rand_u32() -> u32 {
 
 /// Request log + device <-> IP index + the device's last IP (SOC console, section 6.1).
 async fn log_request(app: &App, ev: &LogEvent) -> Result<(), Error> {
+    log_batch(app, std::slice::from_ref(ev)).await
+}
+
+/// Verified traffic per device + IP, so a batch updates the index once per pair, not per request.
+fn pairs(events: &[LogEvent]) -> HashMap<(String, String), (u32, String)> {
+    let mut out: HashMap<(String, String), (u32, String)> = HashMap::new();
+    for ev in events.iter().filter(|e| auth::is_id(&e.device) && !e.ip.is_empty() && e.status == 200) {
+        let e = out.entry((ev.device.clone(), cap(&ev.ip, 45))).or_default();
+        e.0 += 1;
+        e.1 = cap(&ev.country, 2); // the latest wins
+    }
+    out
+}
+
+async fn log_batch(app: &App, events: &[LogEvent]) -> Result<(), Error> {
+    for ev in events {
+        put_event(app, "e", event_item(ev)).await?;
+    }
     let t = now();
+    for ((device, ip), (hits, country)) in pairs(events) {
+        for (pk, sk) in [(format!("d#{device}"), format!("ip#{ip}")), (format!("i#{ip}"), format!("d#{device}"))] {
+            app.db
+                .update_item()
+                .table_name(&app.index)
+                .key("pk", s(pk))
+                .key("sk", s(sk))
+                .update_expression("SET last_seen = :t, country = :c, first_seen = if_not_exists(first_seen, :t) ADD hits :n")
+                .expression_attribute_values(":t", n(t))
+                .expression_attribute_values(":c", s(&country))
+                .expression_attribute_values(":n", n(hits))
+                .send()
+                .await?;
+        }
+        let _ = app
+            .db
+            .update_item()
+            .table_name(&app.devices)
+            .key("device_id", s(&device))
+            .update_expression("SET last_seen = :t, last_ip = :ip")
+            .condition_expression("attribute_exists(device_id)")
+            .expression_attribute_values(":t", n(t))
+            .expression_attribute_values(":ip", s(ip))
+            .send()
+            .await;
+    }
+    Ok(())
+}
+
+fn event_item(ev: &LogEvent) -> Item {
     let mut item: Item = [
         ("device", cap(&ev.device, 32)),
         ("ip", cap(&ev.ip, 45)),
@@ -231,37 +280,7 @@ async fn log_request(app: &App, ev: &LogEvent) -> Result<(), Error> {
     .collect();
     item.insert("status".into(), n(ev.status));
     item.insert("ms".into(), n(ev.ms.clamp(0.0, 60_000.0)));
-    put_event(app, "e", item).await?;
-
-    if !auth::is_id(&ev.device) || ev.ip.is_empty() || ev.status != 200 {
-        return Ok(()); // only verified traffic builds the device / IP picture
-    }
-    let ip = cap(&ev.ip, 45);
-    for (pk, sk) in [(format!("d#{}", ev.device), format!("ip#{ip}")), (format!("i#{ip}"), format!("d#{}", ev.device))] {
-        app.db
-            .update_item()
-            .table_name(&app.index)
-            .key("pk", s(pk))
-            .key("sk", s(sk))
-            .update_expression("SET last_seen = :t, country = :c, first_seen = if_not_exists(first_seen, :t) ADD hits :one")
-            .expression_attribute_values(":t", n(t))
-            .expression_attribute_values(":c", s(cap(&ev.country, 2)))
-            .expression_attribute_values(":one", n(1))
-            .send()
-            .await?;
-    }
-    let _ = app
-        .db
-        .update_item()
-        .table_name(&app.devices)
-        .key("device_id", s(&ev.device))
-        .update_expression("SET last_seen = :t, last_ip = :ip")
-        .condition_expression("attribute_exists(device_id)")
-        .expression_attribute_values(":t", n(t))
-        .expression_attribute_values(":ip", s(ip))
-        .send()
-        .await;
-    Ok(())
+    item
 }
 
 /// Rejected requests are logged at most once per IP per minute, so junk can't flood the log.
@@ -461,11 +480,15 @@ async fn report_route(app: &App, req: &Request) -> Result<Response<Body>, Error>
 }
 
 async fn internal_log_route(app: &App, req: &Request) -> Result<Response<Body>, Error> {
-    let Ok(ev) = serde_json::from_slice::<LogEvent>(req.body()) else {
-        return reply(400, json!({ "error": "bad log event" }));
+    // The Worker batches events (worker/src/log.js) so this runs a few times a minute, not per request.
+    let Ok(events) = serde_json::from_slice::<Vec<LogEvent>>(req.body()) else {
+        return reply(400, json!({ "error": "body must be an array of log events" }));
     };
-    log_request(app, &ev).await?;
-    reply(200, json!({ "ok": true }))
+    if events.len() > MAX_LOG_BATCH {
+        return reply(400, json!({ "error": "too many events" }));
+    }
+    log_batch(app, &events).await?;
+    reply(200, json!({ "ok": true, "logged": events.len() }))
 }
 
 // ───────────────────────── admin routes ─────────────────────────
@@ -697,6 +720,29 @@ mod tests {
         assert_eq!(day(951_782_400), "2000-02-29");
         assert_eq!(day(1_700_000_000), "2023-11-14");
         assert_eq!(day(1_798_675_200), "2026-12-31");
+    }
+
+    #[test]
+    fn batch_updates_the_index_once_per_device_and_ip() {
+        let ev = |device: &str, ip: &str, status: u16, country: &str| LogEvent {
+            device: device.into(),
+            ip: ip.into(),
+            status,
+            country: country.into(),
+            ..Default::default()
+        };
+        let (a, b) = ("a".repeat(32), "b".repeat(32));
+        let p = pairs(&[
+            ev(&a, "1.1.1.1", 200, "IN"),
+            ev(&a, "1.1.1.1", 200, "US"),
+            ev(&a, "2.2.2.2", 200, "IN"),
+            ev(&b, "1.1.1.1", 401, "IN"), // rejected: not in the IP picture
+            ev("not-an-id", "1.1.1.1", 200, "IN"),
+            ev(&b, "", 200, "IN"),
+        ]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[&(a.clone(), "1.1.1.1".into())], (2, "US".into()));
+        assert_eq!(p[&(a, "2.2.2.2".into())], (1, "IN".into()));
     }
 
     #[test]

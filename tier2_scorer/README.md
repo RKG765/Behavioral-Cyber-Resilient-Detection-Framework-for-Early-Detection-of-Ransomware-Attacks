@@ -46,8 +46,10 @@ and publishes `device_id -> {"pk", "status"}` to Workers KV.
 `{"name", "path", "sha256", "reason", "reasons": [..]}`: a file the user sent for review from the ask
 dialog. Saved to the events table (90 days); the console's Reports view lists it.
 
-**`POST /internal/log`** (Worker only, origin secret, unsigned): one request-log row per Worker
-request. Verified 200s also update the IP history and the device's `last_seen`.
+**`POST /internal/log`** (Worker only, origin secret, unsigned): a JSON array of up to 100 log
+events. The Worker batches them (every ~2 s, or at 50 events) so this runs a few times a minute rather
+than once per request. Each event is one events row; verified 200s also update the IP history and the
+device's `last_seen`, once per device + IP in the batch.
 
 **`GET|POST /admin/*`** (console only: Pages Function → CloudFront, origin secret): needs **both**
 the Cloudflare Access JWT (`cf-access-jwt-assertion`) and the Cognito ID token (`x-tt-admin-token`),
@@ -100,7 +102,8 @@ last 5 minutes. Every action is audited. Reads: `overview`, `devices`, `devices/
    aws cognito-idp admin-create-user --user-pool-id <pool id> --username you@example.com --user-attributes Name=email,Value=you@example.com Name=email_verified,Value=true
    aws cognito-idp admin-add-user-to-group --user-pool-id <pool id> --username you@example.com --group-name admin
    ```
-   On first login, set a password (14+ characters); managed login then offers to add a passkey.
+   On first login, set a password (14+ characters); managed login then makes you set up an
+   authenticator app, and every sign-in after that needs its code (MFA is required).
 6. **Agent env:** `EDR_CLOUD_ENDPOINTS=https://api.<domain>,https://<id>.cloudfront.net` (primary
    first), `EDR_LICENCE_KEY`, `EDR_SERVER_PUBKEY`. Without these the agent keeps using the local
    `server.py`.
