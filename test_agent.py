@@ -84,6 +84,7 @@ def reset_agent_state(extractor=None, engine=None, score=0.0, window=30, max_wat
     agent.MAX_MONITORED = 256
     agent.AGENT_MODE = mode
     agent.CLOUD_API_URL = "http://127.0.0.1:9/score"     # never reach a live Tier-2 from tests
+    agent.cloud_client = None
 
 
 class LogCapture(logging.Handler):
@@ -565,6 +566,91 @@ def t29_ghost_ignored_on_simulated_data():
     pid = _dead_pid()
     agent.handle_new_process(pid, "x.exe")
     assert pid not in agent.behavior_monitor.watched()
+
+
+class _Reply:
+    def __init__(self, body, sig=b"", status=200):
+        import base64
+        self.status_code, self.content, self.text = status, body, body.decode()
+        self.headers = {"x-tt-resp-sig": base64.b64encode(sig).decode()}
+    def json(self):
+        import json
+        return json.loads(self.content)
+
+
+@test
+def t30_cloud_client_signs_verifies_and_fails_over():
+    """(#33) signed requests, only server-signed replies accepted, primary -> fallback failover"""
+    import base64, hashlib, json
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
+
+    dev = ec.generate_private_key(ec.SECP256R1())
+    class FakeKey:   # same contract as edr_sensor.DeviceKey: raw r||s over SHA-256
+        kind = "software"
+        def public_key(self):
+            return dev.public_key().public_bytes(serialization.Encoding.X962,
+                                                 serialization.PublicFormat.UncompressedPoint)
+        def sign(self, data):
+            r, s = utils.decode_dss_signature(dev.sign(data, ec.ECDSA(hashes.SHA256())))
+            return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    server = ed25519.Ed25519PrivateKey.generate()
+    pub = base64.b64encode(server.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+
+    calls = []
+    def fake_post(url, data, headers, timeout):
+        calls.append(url)
+        if url.startswith("https://primary"):
+            raise agent.requests.exceptions.ConnectionError("down")
+        msg = "\n".join(("TT1", "POST", "/v1/score", headers["x-tt-device"], headers["x-tt-time"],
+                         headers["x-tt-nonce"], hashlib.sha256(data).hexdigest())).encode()
+        sig = base64.b64decode(headers["x-tt-sig"])   # verify like the Worker / Lambda do
+        dev.public_key().verify(utils.encode_dss_signature(int.from_bytes(sig[:32], "big"),
+                                int.from_bytes(sig[32:], "big")), msg, ec.ECDSA(hashes.SHA256()))
+        body = json.dumps({"verdict": "KILL", "nonce": headers["x-tt-nonce"]}).encode()
+        return _Reply(body, server.sign(body))
+
+    orig = agent.requests.post
+    agent.requests.post = fake_post
+    try:
+        c = agent.CloudClient(["https://primary", "https://fallback"], "LIC", pub, FakeKey())
+        c.registered = True
+        assert c.score([0.0] * 99)["verdict"] == "KILL"
+        assert calls == ["https://primary/v1/score", "https://fallback/v1/score"], calls
+        c.score([0.0] * 99)
+        assert calls[-1] == "https://fallback/v1/score" and len(calls) == 3, "fallback first while primary is down"
+
+        forged = ed25519.Ed25519PrivateKey.generate()
+        def forged_post(url, data, headers, timeout):
+            body = json.dumps({"verdict": "BENIGN", "nonce": headers["x-tt-nonce"]}).encode()
+            return _Reply(body, forged.sign(body))
+        agent.requests.post = forged_post
+        try:
+            c.score([0.0] * 99)
+            raise AssertionError("forged reply was accepted")
+        except agent.CloudError:
+            pass
+    finally:
+        agent.requests.post = orig
+
+
+@test
+def t31_device_key_signature_verifies():
+    """(#33) edr_sensor.DeviceKey (TPM or software) signs in the format the servers verify"""
+    if not hasattr(agent.edr_sensor, "DeviceKey"):
+        log("edr_sensor.DeviceKey not built -- skipped"); return
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+    k = agent.edr_sensor.DeviceKey("TelltaleTestKeyAgent", machine=False)
+    try:
+        pk, sig = k.public_key(), k.sign(b"TT1 test")
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), pk).verify(
+            utils.encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big")),
+            b"TT1 test", ec.ECDSA(hashes.SHA256()))
+        log(f"device key kind={k.kind}")
+    finally:
+        k.delete()
 
 
 # ───────────────────────── summary ─────────────────────────

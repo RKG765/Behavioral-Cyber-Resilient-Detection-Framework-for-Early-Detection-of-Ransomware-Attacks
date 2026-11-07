@@ -47,6 +47,8 @@ Production Corrections Applied:
   #30 Alert-only by default; killing requires --mode enforce / EDR_MODE=enforce
   #31 Abusable signed tools (shells, script hosts, LOLBins) are always monitored
   #32 Ghost processes (exited before triage) are judged from their Sysmon events
+  #33 Cloud Tier 2 is signed: TPM device key on requests, server key on replies,
+      primary -> fallback endpoint failover (EDR_CLOUD_ENDPOINTS)
 """
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
@@ -57,6 +59,7 @@ import time
 import uuid
 import ctypes
 import ctypes.wintypes as wt
+import base64
 import hashlib
 import json
 import sqlite3
@@ -93,6 +96,11 @@ MIN_SENSOR_EVENTS = 3              # training MIN_LEN: fewer events are never sc
 
 # ── Cloud API (Tier 2 — server.py) ──
 CLOUD_API_URL   = os.environ.get("EDR_CLOUD_URL", "http://127.0.0.1:8000/score")   # Tier-2 FastAPI server
+
+# ── Signed cloud Tier 2 (#33, docs/PROD_ARCHITECTURE.md 4.1). Set all three to use it instead of server.py ──
+CLOUD_ENDPOINTS = [u.strip().rstrip("/") for u in os.environ.get("EDR_CLOUD_ENDPOINTS", "").split(",") if u.strip()]
+LICENCE_KEY     = os.environ.get("EDR_LICENCE_KEY", "")
+SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY", "")   # base64 Ed25519 key that must sign every reply
 
 # ── Behavioral monitoring (#16, #21) ──
 MONITOR_WINDOW     = 30            # seconds each unknown process is observed
@@ -789,6 +797,117 @@ class InferenceEngine:
 
 
 # ══════════════════════════════════════════════════════════════
+# PHASE 4b: SIGNED CLOUD TIER-2 CLIENT (#33)
+# ══════════════════════════════════════════════════════════════
+
+class CloudError(Exception):
+    """Tier 2 answered, but the answer can't be used (rejected, unsigned, mismatched)."""
+
+
+class CloudUnavailable(requests.exceptions.ConnectionError):
+    """No endpoint answered -- handled like an offline cloud (grey-zone timeout policy)."""
+
+
+class CloudClient:
+    """
+    Every request is signed with the device key (edr_sensor.DeviceKey: TPM when available).
+    Only replies signed by SERVER_PUBKEY that echo our nonce are accepted, so a fake server
+    can't hand out verdicts. The first endpoint is used until it fails (network error, 5xx,
+    or 429 such as Cloudflare's free daily cap); then the fallback is tried first for
+    FAILOVER_S. Protocol: tier2_scorer/README.md.
+    """
+
+    FAILOVER_S = 600
+
+    def __init__(self, endpoints, licence_key, server_pubkey_b64, key):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        self.endpoints, self.licence, self.key = endpoints, licence_key, key
+        self.server_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(server_pubkey_b64))
+        self.public_key = key.public_key()
+        self.device_id = hashlib.sha256(self.public_key).hexdigest()[:32]
+        self.registered = False
+        self.primary_down_until = 0.0
+
+    def register(self):
+        """Idempotent; also re-publishes the key to the edge. Only via the primary (Cloudflare)."""
+        body = {"licence_key": self.licence, "key_kind": self.key.kind,
+                "public_key": base64.b64encode(self.public_key).decode()}
+        data = self._post("/v1/register", body, failover=False)
+        if data.get("device_id") != self.device_id:
+            raise CloudError("register reply is for a different device")
+        self.registered = True
+        logger.info(f"[CLOUD] device {self.device_id} registered ({self.key.kind} key)")
+
+    def score(self, features):
+        if not self.registered:
+            self.register()
+        return self._post("/v1/score", {"features": features})
+
+    def _post(self, path, body, failover=True):
+        raw = json.dumps(body, separators=(",", ":")).encode()
+        order = list(self.endpoints) if failover else self.endpoints[:1]
+        if failover and time.time() < self.primary_down_until:
+            order.reverse()
+        last = None
+        for base in order:
+            nonce, stamp = os.urandom(16).hex(), str(int(time.time()))
+            msg = "\n".join(("TT1", "POST", path, self.device_id, stamp, nonce,
+                             hashlib.sha256(raw).hexdigest())).encode()
+            headers = {"content-type": "application/json", "x-tt-device": self.device_id,
+                       "x-tt-time": stamp, "x-tt-nonce": nonce,
+                       "x-tt-sig": base64.b64encode(self.key.sign(msg)).decode()}
+            try:
+                r = requests.post(base + path, data=raw, headers=headers, timeout=5)
+                if r.status_code >= 500 or r.status_code == 429:
+                    raise CloudUnavailable(f"HTTP {r.status_code}")
+            except requests.exceptions.RequestException as ex:
+                last = ex
+                if base == self.endpoints[0] and len(self.endpoints) > 1:
+                    self.primary_down_until = time.time() + self.FAILOVER_S
+                    logger.warning(f"[CLOUD] primary endpoint failed ({ex}) -- fallback first for {self.FAILOVER_S}s")
+                continue
+            if r.status_code != 200:
+                if r.status_code == 401 and path == "/v1/score":
+                    self.registered = False   # edge may not know the key yet: re-register next time
+                raise CloudError(f"{path} rejected: HTTP {r.status_code} {r.text[:120]}")
+            try:
+                self.server_key.verify(base64.b64decode(r.headers.get("x-tt-resp-sig", "")), r.content)
+            except Exception:
+                raise CloudError(f"{path}: reply is not signed by the server key") from None
+            data = r.json()
+            if data.get("nonce") != nonce:
+                raise CloudError(f"{path}: reply does not match this request")
+            return data
+        raise CloudUnavailable(f"no Tier-2 endpoint answered ({last})")
+
+
+def make_cloud_client():
+    """Signed cloud Tier 2 when configured (#33); None keeps the local server.py."""
+    if not CLOUD_ENDPOINTS:
+        return None
+    if not (LICENCE_KEY and SERVER_PUBKEY) or not hasattr(edr_sensor, "DeviceKey"):
+        logger.error("EDR_CLOUD_ENDPOINTS is set but EDR_LICENCE_KEY, EDR_SERVER_PUBKEY or "
+                     "edr_sensor.DeviceKey is missing -- cloud Tier 2 disabled")
+        return None
+    try:
+        client = CloudClient(CLOUD_ENDPOINTS, LICENCE_KEY, SERVER_PUBKEY, edr_sensor.DeviceKey())
+    except Exception as e:
+        logger.error(f"Cloud Tier 2 disabled: {e}")
+        return None
+    logger.info(f"Cloud Tier 2: {len(CLOUD_ENDPOINTS)} endpoint(s), device {client.device_id}")
+    return client
+
+
+def ask_tier2(payload):
+    """Tier-2 verdict: the signed cloud client when configured, else the local server.py."""
+    if cloud_client is not None:
+        return cloud_client.score(payload["features"])
+    resp = requests.post(CLOUD_API_URL, json=payload, timeout=5)
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ══════════════════════════════════════════════════════════════
 # PHASE 5: PROCESS TRIAGE -- THE DECISION ENGINE
 #   Option B (#16): NO suspend(). Triage is path/signature based and
 #   fast; unknown processes are handed to the BehaviorMonitor.
@@ -809,6 +928,7 @@ inference_engine = None
 sequence_extractor = None
 whitelist_db = None
 behavior_monitor = None
+cloud_client = None
 
 
 def actions_enforced() -> bool:
@@ -1213,22 +1333,21 @@ class BehaviorMonitor:
         }
 
         try:
-            resp = requests.post(CLOUD_API_URL, json=payload, timeout=5)
-            resp.raise_for_status()
-            data       = resp.json()
+            data       = ask_tier2(payload)
             verdict    = data.get("verdict", "UNKNOWN")
-            confidence = float(data.get("confidence", 0.0))
+            # The signed cloud API returns the verdict only (no probability, plan 4.1).
+            confidence = "n/a" if data.get("confidence") is None else f"{float(data['confidence']):.4f}"
 
             if verdict == "KILL":
                 logger.critical(
                     f"[CLOUD VERDICT]  {name} THREAT per Tier-2 "
-                    f"(Score: {confidence:.2f})  PID:{pid}  path={path}"
+                    f"(Score: {confidence})  PID:{pid}  path={path}"
                 )
                 if e.get("exited_at"):
                     # The PID may already belong to another process -- alert only.
                     logger.critical(
                         f"[POST-MORTEM THREAT]  {name} PID:{pid} had exited -- Tier-2 "
-                        f"conf={confidence:.4f}  path={path}  (investigate its children / files)"
+                        f"conf={confidence}  path={path}  (investigate its children / files)"
                     )
                     return
                 try:
@@ -1237,7 +1356,7 @@ class BehaviorMonitor:
                             abs(proc.create_time() - e["created"]) <= 1e-3):
                         _enforce_kill(
                             proc, pid, name, path,
-                            f"Tier-2 KILL verdict conf={confidence:.4f}"
+                            f"Tier-2 KILL verdict conf={confidence}"
                         )
                     else:
                         logger.debug(
@@ -1250,7 +1369,7 @@ class BehaviorMonitor:
             else:
                 logger.info(
                     f"[CLOUD VERDICT]  {name} ALLOWED by Tier-2 "
-                    f"(Score: {confidence:.2f})  PID:{pid}"
+                    f"(Score: {confidence})  PID:{pid}"
                 )
 
         except requests.exceptions.ConnectionError:
@@ -1453,7 +1572,7 @@ def main():
       6. Start thread pool
       7. Start WMI listener (blocks main thread)
     """
-    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor, AGENT_MODE
+    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor, cloud_client, AGENT_MODE
 
     if "--mode" in sys.argv:
         i = sys.argv.index("--mode")
@@ -1500,6 +1619,14 @@ def main():
 
     # ── Initialize SQLite whitelist (#8 Layer 1B) ───────────
     whitelist_db = CustomWhitelist()
+
+    # ── Signed cloud Tier 2 (#33) -- register now; a failure is retried on first escalation ──
+    cloud_client = make_cloud_client()
+    if cloud_client is not None:
+        try:
+            cloud_client.register()
+        except Exception as e:
+            logger.warning(f"[CLOUD] registration failed ({e}) -- will retry on first escalation")
 
     # ── Start Grey Zone Monitor (#6, #11) ───────────────────
     gz_monitor = GreyZoneMonitor()

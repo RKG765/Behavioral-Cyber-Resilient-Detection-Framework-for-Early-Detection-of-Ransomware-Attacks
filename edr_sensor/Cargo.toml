@@ -19,7 +19,11 @@ regex = "1"
 roxmltree = "0.20"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_EventLog"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_EventLog", "Win32_Security_Cryptography"] }
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dev-dependencies]
+p256 = { version = "0.13", features = ["ecdsa"] }
 
 [profile.release]
 lto = true

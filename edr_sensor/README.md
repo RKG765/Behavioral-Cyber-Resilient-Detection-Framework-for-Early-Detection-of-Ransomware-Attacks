@@ -45,6 +45,8 @@ Rust unit tests: `cargo test`.
 | `.stats()` | received / ingested / errors / evicted / tracked |
 | `compute_features(events)` | Pure function over dicts with dataset column names |
 | `feature_names()`, `FEATURE_DIM`, `WINDOW` | Schema |
+| `DeviceKey(name="TelltaleDeviceKey", machine=True)` | Device key for signed Tier-2 requests: opens or creates a non-exportable ECDSA P-256 key, in the TPM when available, else the software key store. `machine=True` needs admin. |
+| `.kind`, `.public_key()`, `.sign(data)`, `.delete()` | `"tpm"` / `"software"`; 65-byte SEC1 key; raw r‖s signature over SHA-256(data), about 36 ms on a TPM; remove the key |
 
 ## Training parity
 

@@ -6,5 +6,6 @@ psutil>=5.9
 WMI>=1.5.1
 pywin32>=306
 requests>=2.31
+cryptography>=42      # verifies Tier-2 reply signatures (signed cloud, #33)
 # Live Sysmon features: build the Rust extension (see edr_sensor/README.md)
 #   pip install maturin && python -m maturin build --release -m edr_sensor/Cargo.toml

@@ -11,6 +11,8 @@
 pub mod collector;
 pub mod event;
 pub mod features;
+#[cfg(windows)]
+pub mod identity;
 pub mod ip;
 pub mod store;
 
@@ -126,9 +128,48 @@ fn compute_features(events: Vec<HashMap<String, String>>) -> PyResult<Vec<f32>> 
     Ok(features::compute(&window, creation.as_ref()).to_vec())
 }
 
+/// Device key for signed Tier-2 requests: TPM when available, else software.
+/// The private key never leaves the key store.
+#[cfg(windows)]
+#[pyclass(module = "edr_sensor")]
+struct DeviceKey(identity::DeviceKey);
+
+#[cfg(windows)]
+#[pymethods]
+impl DeviceKey {
+    /// `machine=True` (the agent, running as SYSTEM) needs admin rights.
+    #[new]
+    #[pyo3(signature = (name = "TelltaleDeviceKey".to_string(), machine = true))]
+    fn new(name: String, machine: bool) -> PyResult<Self> {
+        identity::DeviceKey::open_or_create(&name, machine).map(DeviceKey).map_err(PyOSError::new_err)
+    }
+
+    /// "tpm" or "software" (shown as lower trust in the admin console).
+    #[getter]
+    fn kind(&self) -> &'static str {
+        if self.0.tpm { "tpm" } else { "software" }
+    }
+
+    /// Uncompressed SEC1 public key (65 bytes).
+    fn public_key(&self) -> PyResult<std::borrow::Cow<'static, [u8]>> {
+        self.0.public_key().map(Into::into).map_err(PyOSError::new_err)
+    }
+
+    /// ECDSA P-256 over SHA-256(data), raw r||s (64 bytes).
+    fn sign(&self, py: Python<'_>, data: &[u8]) -> PyResult<std::borrow::Cow<'static, [u8]>> {
+        py.allow_threads(|| self.0.sign(data)).map(Into::into).map_err(PyOSError::new_err)
+    }
+
+    fn delete(&mut self) -> PyResult<()> {
+        self.0.delete().map_err(PyOSError::new_err)
+    }
+}
+
 #[pymodule]
 fn edr_sensor(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Sensor>()?;
+    #[cfg(windows)]
+    m.add_class::<DeviceKey>()?;
     m.add_function(wrap_pyfunction!(feature_names, m)?)?;
     m.add_function(wrap_pyfunction!(compute_features, m)?)?;
     m.add("FEATURE_DIM", features::FEATURE_DIM)?;

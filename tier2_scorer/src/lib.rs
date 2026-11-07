@@ -5,6 +5,9 @@
 
 use std::sync::OnceLock;
 
+#[cfg(feature = "lambda")]
+pub mod auth;
+
 pub const FEATURE_DIM: usize = 99;
 const HIDDEN: usize = 64;
 /// (out, in) of each dense layer: proj, res1.a, res1.b, res2.a, res2.b, head.

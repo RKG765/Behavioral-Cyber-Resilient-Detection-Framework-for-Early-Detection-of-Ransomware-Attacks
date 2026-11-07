@@ -619,7 +619,9 @@ other processes. Plan beta testing around that.
    [`worker/`](../worker/src/index.js)); deploy waits on the domain, the AWS region and your accounts.*
 2. **Device identity:** TPM key and signing in `edr_sensor`, `/v1/register` (AWS, publishing to KV),
    signature + nonce + rate-limit checks in both scorers, signed responses, agent failover between
-   endpoints.
+   endpoints. *Status: built and unit-tested (protocol in [`tier2_scorer/README.md`](../tier2_scorer/README.md)).
+   A TPM signature takes ~36 ms, which adds to each Tier-2 request. TPM attestation and global replay
+   tracking are deferred (attestation optional; replay tracking comes with the step-5 logs).*
 3. **Edge protection:** domain on Cloudflare, WAF ruleset, rate-limit rule, Bot Fight Mode,
    unsigned-request drop, CloudFront Function on the fallback path, Cloudflare-only secret on the AWS
    origins.
