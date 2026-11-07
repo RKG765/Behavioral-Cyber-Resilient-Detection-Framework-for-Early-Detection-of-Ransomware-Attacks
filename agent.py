@@ -845,16 +845,17 @@ class CloudClient:
 
     def _post(self, path, body, failover=True):
         raw = json.dumps(body, separators=(",", ":")).encode()
+        body_hash = hashlib.sha256(raw).hexdigest()
         order = list(self.endpoints) if failover else self.endpoints[:1]
         if failover and time.time() < self.primary_down_until:
             order.reverse()
         last = None
         for base in order:
             nonce, stamp = os.urandom(16).hex(), str(int(time.time()))
-            msg = "\n".join(("TT1", "POST", path, self.device_id, stamp, nonce,
-                             hashlib.sha256(raw).hexdigest())).encode()
+            msg = "\n".join(("TT1", "POST", path, self.device_id, stamp, nonce, body_hash)).encode()
+            # x-amz-content-sha256: CloudFront OAC needs the body hash for POSTs to the Lambda URL.
             headers = {"content-type": "application/json", "x-tt-device": self.device_id,
-                       "x-tt-time": stamp, "x-tt-nonce": nonce,
+                       "x-tt-time": stamp, "x-tt-nonce": nonce, "x-amz-content-sha256": body_hash,
                        "x-tt-sig": base64.b64encode(self.key.sign(msg)).decode()}
             try:
                 r = requests.post(base + path, data=raw, headers=headers, timeout=5)

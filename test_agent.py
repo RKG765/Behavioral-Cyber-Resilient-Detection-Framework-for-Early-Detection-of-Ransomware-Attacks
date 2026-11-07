@@ -605,6 +605,7 @@ def t30_cloud_client_signs_verifies_and_fails_over():
             raise agent.requests.exceptions.ConnectionError("down")
         msg = "\n".join(("TT1", "POST", "/v1/score", headers["x-tt-device"], headers["x-tt-time"],
                          headers["x-tt-nonce"], hashlib.sha256(data).hexdigest())).encode()
+        assert headers["x-amz-content-sha256"] == hashlib.sha256(data).hexdigest()   # CloudFront OAC
         sig = base64.b64decode(headers["x-tt-sig"])   # verify like the Worker / Lambda do
         dev.public_key().verify(utils.encode_dss_signature(int.from_bytes(sig[:32], "big"),
                                 int.from_bytes(sig[32:], "big")), msg, ec.ECDSA(hashes.SHA256()))

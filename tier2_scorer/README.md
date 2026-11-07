@@ -19,6 +19,7 @@ by a registered device key, and every reply is signed by the server (build step 
 | `x-tt-time` | Unix seconds; must be within ±300 s of the server clock |
 | `x-tt-nonce` | 32 random hex chars, single use |
 | `x-tt-sig` | base64 ECDSA P-256 signature, raw r‖s, over SHA-256 of the canonical string |
+| `x-amz-content-sha256` | hex SHA-256 of the body; CloudFront OAC requires it on the AWS path (sent on both paths) |
 
 Canonical string (newline-separated):
 

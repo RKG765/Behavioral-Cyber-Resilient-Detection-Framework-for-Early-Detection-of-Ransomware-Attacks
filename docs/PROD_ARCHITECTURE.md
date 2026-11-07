@@ -54,7 +54,7 @@ flowchart LR
     end
 
     subgraph CFL["Cloudflare (front door, nearest city)"]
-        Edge["DNS + DDoS + WAF free ruleset\n+ rate-limit rule + Bot Fight Mode"]
+        Edge["DNS + DDoS + WAF free ruleset\n+ rate-limit rule + unsigned-request drop"]
         Edge --> Worker["Worker: score (Rust -> WASM)\nverify signature -> Tier 2 -> signed verdict"]
         Worker --> KV[("Workers KV\ndevice public keys, revocations")]
         Access["Cloudflare Access\n(admin login layer 1)"] --> Pages["Pages: admin SOC console"]
@@ -111,7 +111,7 @@ before launch**; free tiers change.
 | Piece | Service | Free allowance |
 |---|---|---|
 | DNS, TLS, DDoS | Proxied DNS on your domain, Universal SSL | Unmetered DDoS mitigation on every plan |
-| Filtering | **WAF Free Managed Ruleset**, **1 rate-limiting rule**, Bot Fight Mode, Under Attack mode toggle | Included in Free |
+| Filtering | **WAF Free Managed Ruleset**, **1 rate-limiting rule** (fixed 10 s window, per IP), a custom rule dropping unsigned API requests, an IP block list, Under Attack mode toggle. **Bot Fight Mode stays off:** on Free it can challenge API clients like the agent and can't be skipped. | Included in Free |
 | Primary scorer | **Worker** running the Rust scorer compiled to WASM | 100,000 requests/day, 10 ms CPU per request, 1,000 requests/min burst |
 | Device keys | **Workers KV**: device public key + status, written by AWS on register / revoke | Free daily read / write allowance (reads cached at each city) |
 | Admin console hosting | **Pages** (static site) | Free |
@@ -470,7 +470,7 @@ sequenceDiagram
 | Panel | Source (GraphQL dataset) |
 |---|---|
 | Edge requests, cached vs uncached, status codes, top countries | `httpRequestsAdaptiveGroups` |
-| **Security events:** WAF, rate-limit and Bot Fight blocks, by action, rule, top IPs, top ASNs | `firewallEventsAdaptive` |
+| **Security events:** WAF, rate-limit and custom-rule blocks, by action, rule, top IPs, top ASNs | `firewallEventsAdaptive` |
 | DDoS mitigation events | Security events (DDoS source) |
 | Worker requests, errors, CPU time p50 / p99, subrequests | `workersInvocationsAdaptive` |
 | **Free-quota gauges:** Worker requests today vs 100K (alert at 80%), KV reads / writes vs daily allowance | Derived |
@@ -531,7 +531,7 @@ protected because the agent still suspends and asks.
 ```mermaid
 flowchart LR
     A["Attacker traffic"] --> L1["Cloudflare network\nDDoS absorbed (L3/4/7)"]
-    L1 --> L2["WAF free ruleset + rate-limit rule\n+ Bot Fight Mode + IP blocks"]
+    L1 --> L2["WAF free ruleset + rate-limit rule\n+ unsigned-request drop + IP blocks"]
     L2 --> L3["Worker: header check, then signature check\n(cheapest checks first)"]
     L3 --> L4["Device status (KV) + nonce + per-device limit"]
     L4 --> OK["Tier 2 runs"]
@@ -542,7 +542,7 @@ flowchart LR
 | Threat | Mitigation |
 |---|---|
 | **Volumetric DDoS** (L3/L4) | Cloudflare's unmetered DDoS mitigation on every plan; on the fallback path, AWS Shield Standard (automatic on CloudFront) |
-| **HTTP floods** (L7) | WAF free managed ruleset, a rate-limit rule on `/v1/*`, Bot Fight Mode, and the "Under Attack" switch for emergencies. Requests without signature headers are dropped at the edge before the Worker runs. |
+| **HTTP floods** (L7) | WAF free managed ruleset, a rate-limit rule on `/v1/*`, and the "Under Attack" switch for emergencies (Bot Fight Mode is off; it would challenge the agent). Requests without signature headers are dropped at the edge before the Worker runs. |
 | **Quota exhaustion** (burning the free daily cap) | Edge drops unsigned traffic first, so floods don't count against the Worker quota. Per-device limits in the scorer. At the Cloudflare cap the agent fails over to AWS. Lambda **reserved concurrency** caps how much AWS can be driven. Budget alarm at $1. |
 | **"Denial of wallet"** (running up a bill) | Free plans hard-cap rather than bill; AWS reserved concurrency + Budgets alarm; no on-demand DynamoDB |
 | **Forged or replayed requests** | TPM signatures, ±30 s timestamps, single-use nonces (checked per city at the edge and globally in the log writer) |
@@ -622,9 +622,13 @@ other processes. Plan beta testing around that.
    endpoints. *Status: built and unit-tested (protocol in [`tier2_scorer/README.md`](../tier2_scorer/README.md)).
    A TPM signature takes ~36 ms, which adds to each Tier-2 request. TPM attestation and global replay
    tracking are deferred (attestation optional; replay tracking comes with the step-5 logs).*
-3. **Edge protection:** domain on Cloudflare, WAF ruleset, rate-limit rule, Bot Fight Mode,
-   unsigned-request drop, CloudFront Function on the fallback path, Cloudflare-only secret on the AWS
-   origins.
+3. **Edge protection:** domain on Cloudflare, WAF ruleset, rate-limit rule, unsigned-request drop,
+   CloudFront Function on the fallback path, Cloudflare-only secret on the AWS origins.
+   *Status: written as Terraform ([`infra/`](../infra/README.md)), `terraform validate` passes for
+   both clouds, and the edge filter is unit-tested. Changes found while building: Bot Fight Mode is
+   off (it would challenge the agent on Free); CloudFront OAC needs an `x-amz-content-sha256` body
+   hash, which the agent and Worker now send. Real-account checks are in
+   [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 4. **Suspend and ask:** suspend / resume in `edr_sensor`, suspension journal, the helper with
    `TaskDialogIndirect`, the named pipe, the `WTSSendMessage` fallback, the reason mapping, `/v1/report`.
 5. **Admin SOC console:** SQS → log writer, admin API, Access + Cognito (passkeys, roles, step-up), the

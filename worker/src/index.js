@@ -35,11 +35,16 @@ async function score(request, env) {
   return signedJson({ verdict, request_id: crypto.randomUUID(), nonce: auth.nonce }, env.RESPONSE_SIGNING_SEED);
 }
 
-function register(request, env) {
+async function register(request, env) {
+  const body = await request.arrayBuffer();
+  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", body))]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   const headers = new Headers(request.headers);
   headers.set("x-tt-origin-secret", env.ORIGIN_SECRET);
   headers.set("x-tt-client-ip", request.headers.get("cf-connecting-ip") ?? "");
-  return fetch(`${env.AWS_API_URL}/v1/register`, { method: "POST", headers, body: request.body });
+  headers.set("x-amz-content-sha256", hash); // CloudFront OAC needs the body hash for POSTs
+  return fetch(`${env.AWS_API_URL}/v1/register`, { method: "POST", headers, body });
 }
 
 export default {
