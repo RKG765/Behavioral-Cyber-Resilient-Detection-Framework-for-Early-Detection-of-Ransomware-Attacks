@@ -654,6 +654,80 @@ def t31_device_key_signature_verifies():
         k.delete()
 
 
+def _ask_dirs():
+    """Point the agent and the helper at a fresh, private IPC folder."""
+    import telltale_helper as h
+    d = tempfile.mkdtemp(prefix="tt_ipc_")
+    agent.ALERTS_DIR = h.ALERTS_DIR = os.path.join(d, "alerts")
+    agent.DECISIONS_DIR = h.DECISIONS_DIR = os.path.join(d, "decisions")
+    agent.REPORTS_OUTBOX = os.path.join(d, "reports_outbox.jsonl")
+    return h
+
+
+@test
+def t32_ask_mode_waits_for_user_then_closes():
+    """(#34) ask mode never closes on its own; Report keeps the alert open; Close closes the app"""
+    import json
+    reset_agent_state(mode="ask")
+    h = _ask_dirs()
+    p = spawn()
+    proc = psutil.Process(p.pid)
+    with open(agent.FEATURE_META_PATH, encoding="utf-8") as f:
+        names = json.load(f)["features"]
+    vec = np.zeros(99, dtype=np.float32)
+    vec[names.index("has_double_extension")] = 1
+    agent._enforce_kill(proc, p.pid, "PING.EXE", proc.exe(), "score=0.97", vec)
+    time.sleep(0.3)
+    assert p.poll() is None, "ask mode must not close the app on its own"
+    alerts = h.due_alerts({}, time.time())
+    assert len(alerts) == 1 and any("double extension" in r for r in alerts[0]["reasons"]), alerts
+
+    h.decide(alerts[0]["id"], "report")
+    agent.DecisionWatcher().check()
+    assert os.path.exists(agent.REPORTS_OUTBOX) and p.poll() is None, "report must not close the app"
+    assert h.due_alerts({}, time.time()), "alert stays open after a report"
+
+    h.decide(alerts[0]["id"], "close")
+    agent.DecisionWatcher().check()
+    p.wait(timeout=5)
+    assert not h.due_alerts({}, time.time())
+
+
+@test
+def t33_ask_mode_run_anyway_and_forged_decisions():
+    """(#34) Run keeps the app; forged ids, unknown choices and a reused PID close nothing"""
+    import json
+    reset_agent_state(mode="ask")
+    h = _ask_dirs()
+    p = spawn()
+    proc = psutil.Process(p.pid)
+    agent._enforce_kill(proc, p.pid, "PING.EXE", proc.exe(), "score=0.95")
+    a = h.due_alerts({}, time.time())[0]
+    assert a["reasons"] == [], "no features -> no invented reasons"
+    assert not h.due_alerts({a["id"]: time.time()}, time.time()), "dismissed alert waits REMIND_S"
+
+    h.decide("f" * 32, "close")          # no such alert
+    h.decide(a["id"], "explode")         # unknown choice
+    agent.DecisionWatcher().check()
+    assert p.poll() is None
+
+    alert_path = os.path.join(agent.ALERTS_DIR, a["id"] + ".json")
+    with open(alert_path, encoding="utf-8") as f:
+        stale = json.load(f)
+    stale["created"] += 100              # as if the PID now belonged to another process
+    with open(alert_path, "w", encoding="utf-8") as f:
+        json.dump(stale, f)
+    h.decide(a["id"], "close")
+    agent.DecisionWatcher().check()
+    assert p.poll() is None, "a reused PID must never be closed"
+
+    agent._enforce_kill(proc, p.pid, "PING.EXE", proc.exe(), "score=0.95")
+    b = h.due_alerts({}, time.time())[0]
+    h.decide(b["id"], "run")
+    agent.DecisionWatcher().check()
+    assert p.poll() is None and not h.due_alerts({}, time.time())
+
+
 # ───────────────────────── summary ─────────────────────────
 for p in SPAWNED:
     try: p.kill()

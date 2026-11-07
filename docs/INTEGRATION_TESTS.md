@@ -82,3 +82,23 @@ Each item lists what to check and how. "Agent" means the service running as SYST
 - [ ] **Shield Standard** is listed as active for the distribution (automatic, no config).
 - [ ] **Free-tier cost check:** after a week of beta traffic, the AWS bill is $0 and the Cloudflare
   usage pages are under the free limits.
+
+## Step 4: ask mode (alert and ask, no suspension)
+
+- [ ] **Installer:** `install_windows.ps1` (default `-Mode ask`) creates `C:\ProgramData\Telltale\alerts`
+  and `decisions`, with ACLs as written: SYSTEM and Admins full; interactive users read `alerts` and
+  write `decisions`. The `Telltale-Helper` logon task starts the helper unelevated for every user.
+- [ ] **Dialog in a real session:** a detected threat makes the window appear on top for the
+  signed-in user, with the app name, path, reasons and detection line. Only a build check has run;
+  nobody has clicked it yet.
+- [ ] **Buttons as SYSTEM:** Close app closes the flagged app, including an elevated one. Run anyway
+  keeps it running. Send report adds a line to `reports_outbox.jsonl` and keeps the dialog open.
+- [ ] **Queue and reminders:** several alerts show one at a time. A window closed with ✕ comes back
+  after 10 minutes.
+- [ ] **No user signed in:** alerts wait in the folder and appear at the next logon. Decide whether
+  that wait is acceptable, or whether high-confidence threats need another rule.
+- [ ] **Multiple users signed in (fast user switching):** each session's helper shows the alert. The
+  first answer wins, and the others' answers are ignored because the alert file is already gone.
+- [ ] **Packaging:** `tkinter` is included in the Nuitka build of the helper.
+- [ ] **Time to decide:** measure how long real users take to answer. The app keeps running until
+  then; suspension, the safer option, is not built.

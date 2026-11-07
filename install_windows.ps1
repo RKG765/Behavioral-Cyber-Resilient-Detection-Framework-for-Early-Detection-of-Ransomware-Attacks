@@ -19,7 +19,7 @@
   Logs: agent.log in this folder.
 #>
 param(
-    [ValidateSet("alert", "enforce")] [string]$Mode = "alert",
+    [ValidateSet("alert", "ask", "enforce")] [string]$Mode = "ask",
     [switch]$NoTask,
     [switch]$ApplySysmonConfig,
     [switch]$Uninstall,
@@ -28,6 +28,8 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TaskName = "Telltale-Agent"
+$HelperTask = "Telltale-Helper"
+$IpcDir = Join-Path $env:ProgramData "Telltale"
 $SysmonCfg = Join-Path $Root "edr_sensor\live\sysmon_edr.xml"
 $ToolsDir = Join-Path $Root "tools\sysmon"
 
@@ -61,6 +63,9 @@ if ($Uninstall) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         Write-Host "Task removed."
     } else { Write-Host "Task not found." }
+    if (Get-ScheduledTask -TaskName $HelperTask -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $HelperTask -Confirm:$false
+    }
     if ($RemoveSysmon) {
         Step "Uninstalling Sysmon"
         & (Get-SysmonExe) -u
@@ -128,10 +133,23 @@ $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-T
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
     -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
+
+# Ask mode (#34): the agent writes alerts, the user's helper writes decisions.
+Step "Ask-mode folders and the Telltale helper (starts at every logon)"
+foreach ($d in "alerts", "decisions") { New-Item -ItemType Directory -Force -Path (Join-Path $IpcDir $d) | Out-Null }
+& icacls $IpcDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
+& icacls (Join-Path $IpcDir "alerts") /grant "*S-1-5-4:(OI)(CI)RX" | Out-Null      # INTERACTIVE users: read alerts
+& icacls (Join-Path $IpcDir "decisions") /grant "*S-1-5-4:(OI)(CI)RXW" | Out-Null  # ...and write decisions
+$pyw = Join-Path (Split-Path $py) "pythonw.exe"
+$hAction = New-ScheduledTaskAction -Execute $pyw -Argument "`"$(Join-Path $Root 'telltale_helper.py')`"" -WorkingDirectory $Root
+$hTrigger = New-ScheduledTaskTrigger -AtLogOn
+$hPrincipal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited   # every signed-in user, not elevated
+Register-ScheduledTask -TaskName $HelperTask -Action $hAction -Trigger $hTrigger -Principal $hPrincipal `
+    -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)) -Force | Out-Null
 Start-Sleep -Seconds 3
 Get-ScheduledTask -TaskName $TaskName | Format-Table TaskName, State -AutoSize
 
 Write-Host ""
-Write-Host "Installed. Mode: $Mode $(if ($Mode -eq 'alert') { '(threats are logged, not killed)' } else { '(threats are KILLED)' })"
+Write-Host "Installed. Mode: $Mode $(@{ alert = '(threats are logged, not killed)'; ask = '(the user decides in the Telltale helper)'; enforce = '(threats are KILLED)' }[$Mode])"
 Write-Host "Watch alerts:  Get-Content `"$(Join-Path $Root 'agent.log')`" -Wait -Tail 20"
 Write-Host "Remove:        powershell -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -Uninstall"

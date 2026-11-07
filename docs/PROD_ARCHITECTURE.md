@@ -221,6 +221,19 @@ a registered TPM key, a found endpoint only returns `401`, and every attempt sho
 
 ## 5. Consumer exe: suspend and ask, never kill silently
 
+> **As built (step 4): ask without suspending.** Suspend/resume is not implemented, so the flagged app
+> **keeps running while the dialog is open**. Everything else in this section stands, with these
+> substitutions:
+> - **Mode:** `--mode ask` (the installer's default).
+> - **Agent → helper:** alert files in `C:\ProgramData\Telltale\alerts`, locked down with ACLs,
+>   instead of the named pipe.
+> - **Dialog:** a `tkinter` window in `telltale_helper.py`, started at every logon, instead of
+>   `TaskDialogIndirect`.
+> - **Close app:** the existing PID-checked kill, run only on the user's click.
+> - **Send report:** saved to `reports_outbox.jsonl` until `/v1/report` exists (step 5).
+>
+> Suspension, the suspension journal and the `WTSSendMessage` fallback are open.
+
 ### 5.1 Flow
 
 ```mermaid
@@ -631,6 +644,9 @@ other processes. Plan beta testing around that.
    [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 4. **Suspend and ask:** suspend / resume in `edr_sensor`, suspension journal, the helper with
    `TaskDialogIndirect`, the named pipe, the `WTSSendMessage` fallback, the reason mapping, `/v1/report`.
+   *Status: built as **ask without suspending** (see the note at the top of section 5): `--mode ask`,
+   `telltale_helper.py`, the plain-language reasons, decisions applied with the PID-reuse check, and
+   reports saved locally. Tested: agent t32 / t33 and a dialog build check. Suspension is not built.*
 5. **Admin SOC console:** SQS → log writer, admin API, Access + Cognito (passkeys, roles, step-up), the
    views in 6.1, IP blocking.
 6. **Cloud observability:** metrics proxy with caching, AWS and Cloudflare pages, quota gauges, alerts.

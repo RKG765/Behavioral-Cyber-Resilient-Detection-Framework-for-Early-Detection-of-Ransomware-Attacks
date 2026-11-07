@@ -49,6 +49,8 @@ Production Corrections Applied:
   #32 Ghost processes (exited before triage) are judged from their Sysmon events
   #33 Cloud Tier 2 is signed: TPM device key on requests, server key on replies,
       primary -> fallback endpoint failover (EDR_CLOUD_ENDPOINTS)
+  #34 Ask mode: threats go to the user's helper dialog (Close app / Run anyway /
+      Send report); an app is only closed when the user clicks Close
 """
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
@@ -116,6 +118,13 @@ ENFORCE_ON_SIMULATED = False
 # a measurable false-positive rate, so killing must be an explicit opt-in:
 #   set EDR_MODE=enforce   or   python agent.py --mode enforce
 AGENT_MODE = os.environ.get("EDR_MODE", "alert").strip().lower()
+MODES = ("alert", "ask", "enforce")   # 'ask' (#34): the user decides in telltale_helper.py
+
+# ── Ask mode (#34): the agent (SYSTEM) writes alerts, the user's helper writes decisions ──
+IPC_DIR        = os.environ.get("EDR_IPC_DIR", os.path.join(os.environ.get("ProgramData", BASE_DIR), "Telltale"))
+ALERTS_DIR     = os.path.join(IPC_DIR, "alerts")
+DECISIONS_DIR  = os.path.join(IPC_DIR, "decisions")
+REPORTS_OUTBOX = os.path.join(IPC_DIR, "reports_outbox.jsonl")   # uploaded once /v1/report exists (step 5)
 
 # ── Trust cache (#18) ──
 TRUST_CACHE_CAPACITY = 1000
@@ -1073,8 +1082,75 @@ def _safe_kill(proc, pid: int, name: str):
     return False
 
 
-def _enforce_kill(proc, pid, name, path, reason):
-    """Kill, or just log in dry-run mode (#23)."""
+def _write_json(folder, name, data):
+    """Atomic write, so a reader never sees half a file."""
+    os.makedirs(folder, exist_ok=True)
+    tmp = os.path.join(folder, name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, os.path.join(folder, name))
+
+
+# Feature -> plain-language reason for the user's dialog (#34).
+REASONS = {
+    "has_double_extension": "Hid its real type behind a double extension (e.g. .pdf.exe)",
+    "is_executing_from_temp": "Runs from a temporary folder",
+    "is_from_downloads": "Runs from the Downloads folder",
+    "is_system_binary_wrong_path": "Uses a Windows system file name from the wrong folder",
+    "has_base64": "Ran an encoded (base64) command",
+    "has_powershell_bypass": "Started PowerShell hidden or with security policy bypassed",
+    "has_http_download": "Downloaded something from the internet in its command line",
+    "has_ps_obfuscation": "Ran an obfuscated PowerShell expression",
+    "has_persistence_cmd": "Tried to make itself start with Windows",
+    "reg_runkey_log": "Changed a Windows auto-start registry key",
+    "has_destructive_cmd": "Ran a command that deletes backups, shadow copies or event logs",
+    "file_exec_drops_log": "Created new program or script files",
+    "net_has_susp_port": "Connected to an unusual network port",
+    "office_spawns_exec": "Was started by an Office document",
+    "browser_spawns_exec": "Was started by a web browser",
+}
+_feature_names = None
+
+
+def explain(features):
+    """Plain-language reasons from the features that are set; [] when there are none."""
+    global _feature_names
+    if features is None:
+        return []
+    if _feature_names is None:
+        if edr_sensor is not None:
+            _feature_names = edr_sensor.feature_names()
+        else:
+            with open(FEATURE_META_PATH, encoding="utf-8") as f:
+                _feature_names = json.load(f)["features"]
+    vec = np.asarray(features, dtype=float).ravel()
+    return [text for name, text in REASONS.items() if vec[_feature_names.index(name)] > 0]
+
+
+def ask_user(proc, pid, name, path, reason, features=None):
+    """
+    (#34) Ask mode: hand the threat to the user's helper dialog and return at once.
+    DecisionWatcher applies the answer. The app keeps running until the user decides.
+    """
+    try:
+        created = proc.create_time()
+    except psutil.Error:
+        logger.debug(f"Ask skipped: PID:{pid} {name} already exited")
+        return False
+    alert_id = uuid.uuid4().hex
+    _write_json(ALERTS_DIR, alert_id + ".json", {
+        "id": alert_id, "pid": pid, "created": created, "name": name, "path": path,
+        "reason": reason, "reasons": explain(features), "time": time.time(),
+    })
+    logger.critical(f"[ASK] THREAT PID:{pid} {name} -- {reason}  path={path}  "
+                    f"(waiting for the user, alert {alert_id})")
+    return False
+
+
+def _enforce_kill(proc, pid, name, path, reason, features=None):
+    """Kill, ask the user (#34), or just log in dry-run mode (#23)."""
+    if AGENT_MODE == "ask" and not getattr(sequence_extractor, "is_simulated", True):
+        return ask_user(proc, pid, name, path, reason, features)
     if not actions_enforced():
         tag = "ALERT" if AGENT_MODE != "enforce" else "DRY-RUN"
         logger.critical(f"[{tag}] THREAT PID:{pid} {name} -- {reason}  path={path}  "
@@ -1225,7 +1301,7 @@ class BehaviorMonitor:
             score = self._score(e, sequence_extractor.get_sequence(pid))
             if score is not None and score >= THREAT_THRESHOLD:
                 _enforce_kill(proc, pid, name, e["path"],
-                              f"score={score:.4f} >= {THREAT_THRESHOLD}")
+                              f"score={score:.4f} >= {THREAT_THRESHOLD}", e["last_seq"])
                 self._drop(pid)
                 continue
 
@@ -1357,7 +1433,7 @@ class BehaviorMonitor:
                             abs(proc.create_time() - e["created"]) <= 1e-3):
                         _enforce_kill(
                             proc, pid, name, path,
-                            f"Tier-2 KILL verdict conf={confidence}"
+                            f"Tier-2 KILL verdict conf={confidence}", features
                         )
                     else:
                         logger.debug(
@@ -1462,6 +1538,74 @@ class GreyZoneMonitor:
                 f"[FAIL-OPEN] PID:{pid} {name} left running after {GREY_ZONE_TIMEOUT}s "
                 f"Cloud Timeout - Unverified -- score={score:.4f}  path={exe_path}"
             )
+
+    def stop(self):
+        self._stop.set()
+
+
+class DecisionWatcher:
+    """
+    (#34) Applies the user's answers from telltale_helper.py. A decision names an alert the
+    agent wrote; it can only close that flagged process (after a PID-reuse check), leave it
+    running, or queue a report, so a forged decision file gains nothing.
+    """
+
+    def __init__(self):
+        self._stop = threading.Event()
+
+    def monitor(self):
+        logger.info(f"Decision Watcher started (ask mode, {IPC_DIR})")
+        while not self._stop.wait(1):
+            try:
+                self.check()
+            except Exception as e:
+                logger.error(f"Decision watcher error: {e}")
+
+    def check(self):
+        if not os.path.isdir(DECISIONS_DIR):
+            return
+        for fn in os.listdir(DECISIONS_DIR):
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(DECISIONS_DIR, fn)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    decision = json.load(f)
+                os.remove(path)
+            except (OSError, ValueError):
+                continue
+            self.apply(decision)
+
+    def apply(self, decision):
+        alert_id, choice = str(decision.get("id", "")), decision.get("choice")
+        alert_path = os.path.join(ALERTS_DIR, alert_id + ".json")
+        if not (len(alert_id) == 32 and alert_id.isalnum() and os.path.exists(alert_path)):
+            logger.warning(f"Ignored decision for unknown alert {alert_id[:40]!r}")
+            return
+        with open(alert_path, encoding="utf-8") as f:
+            a = json.load(f)
+        pid, name = a["pid"], a["name"]
+        if choice == "report":
+            with open(REPORTS_OUTBOX, "a", encoding="utf-8") as f:
+                f.write(json.dumps(a) + "\n")
+            logger.info(f"[USER REPORT] {name} PID:{pid} -- report saved for upload")
+            return   # the user still picks Close or Run in the same dialog
+        if choice == "close":
+            try:
+                proc = psutil.Process(pid)
+                same = abs(proc.create_time() - a["created"]) <= 1e-3
+            except psutil.Error:
+                proc, same = None, False
+            if same and _safe_kill(proc, pid, name):
+                logger.critical(f"[USER CLOSED] {name} PID:{pid} closed by the user  path={a['path']}")
+            else:
+                logger.info(f"[USER CLOSED] {name} PID:{pid} had already exited")
+        elif choice == "run":
+            logger.warning(f"[USER ALLOWED] {name} PID:{pid} kept running by the user  path={a['path']}")
+        else:
+            logger.warning(f"Ignored decision {choice!r} for alert {alert_id}")
+            return
+        os.remove(alert_path)
 
     def stop(self):
         self._stop.set()
@@ -1578,14 +1722,15 @@ def main():
     if "--mode" in sys.argv:
         i = sys.argv.index("--mode")
         AGENT_MODE = sys.argv[i + 1].strip().lower() if i + 1 < len(sys.argv) else AGENT_MODE
-    if AGENT_MODE not in ("alert", "enforce"):
+    if AGENT_MODE not in MODES:
         logger.warning(f"Unknown mode '{AGENT_MODE}' -- using 'alert'")
         AGENT_MODE = "alert"
 
     print(BANNER.format(policy=NETWORK_FAIL_POLICY))
-    logger.info(f"Mode: {AGENT_MODE.upper()}"
-                + ("  -- threats are KILLED" if AGENT_MODE == "enforce"
-                   else "  -- threats are logged only (use --mode enforce to kill)"))
+    logger.info(f"Mode: {AGENT_MODE.upper()}" + {
+        "enforce": "  -- threats are KILLED",
+        "ask": "  -- the user decides in the Telltale helper (Close app / Run anyway / Send report)",
+    }.get(AGENT_MODE, "  -- threats are logged only (use --mode ask or enforce)"))
 
     # ── #3: Admin privilege check ───────────────────────────
     if not is_admin():
@@ -1637,6 +1782,11 @@ def main():
         daemon=True,
     )
     gz_thread.start()
+
+    # ── Ask mode (#34): apply the user's decisions ──────────
+    decision_watcher = DecisionWatcher()
+    if AGENT_MODE == "ask":
+        threading.Thread(target=decision_watcher.monitor, name="Decisions", daemon=True).start()
 
     # ── Start Behavior Monitor (#16, #21) ───────────────────
     behavior_monitor = BehaviorMonitor()
@@ -1695,6 +1845,7 @@ def main():
         logger.info("Shutting down thread pool...")
         executor.shutdown(wait=False)
         gz_monitor.stop()
+        decision_watcher.stop()
         behavior_monitor.stop()
         watchdog.stop()
         if hasattr(sequence_extractor, "stop"):
