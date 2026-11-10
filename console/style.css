@@ -169,6 +169,9 @@ input, button, select { font: inherit; color: inherit; }
 
 /* ───────── cloud pages: range picker, requests chart, quota bars ───────── */
 .head .tools { margin-bottom: 0; }
+.keybox { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--ink); border-radius: var(--r); background: var(--card); }
+.keybox p { margin: 0 0 8px; font-weight: 600; }
+.keybox code { font-size: 1rem; letter-spacing: 0.04em; user-select: all; }
 .head .count { margin-left: 0; }
 .seg { display: inline-flex; }
 .seg .btn { border-radius: 0; min-width: 3rem; }

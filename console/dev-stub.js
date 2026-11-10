@@ -160,6 +160,13 @@ function route(method, path, params) {
   const [a, b, c] = path.split("/").map(decodeURIComponent);
   if (a === "metrics") return [200, metrics(b, params.get("range"), params.get("q"))];
   const onDay = (rows) => (!day || day === today ? rows : []);
+  if (method === "POST" && a === "licences" && b === "new") {
+    const seats = Number(params.get("seats") ?? 1);
+    const key = "HL-" + Array.from({ length: 4 }, () => hex(5).toUpperCase()).join("-");   // sample only
+    licences.push({ licence_hash: hex(64), seats, used: 0 });
+    audit.push({ ts: now(), admin: "analyst@example.com", action: "licence", target: hex(16) });
+    return [200, { key, licence_hash: hex(64), seats }];
+  }
   if (method === "POST") {
     const d = devices.find((x) => x.device_id === b);
     if (a === "devices" && d) d.status = c === "revoke" ? "revoked" : "active";

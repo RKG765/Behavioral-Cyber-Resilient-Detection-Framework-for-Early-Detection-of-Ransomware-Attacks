@@ -582,6 +582,37 @@ async fn set_status(app: &App, admin_email: &str, id: &str, action: &str) -> Res
     reply(if edge { 200 } else { 502 }, json!({ "device": id, "status": status, "edge_updated": edge }))
 }
 
+/// "HL-" + four groups of five base32 characters: 100 random bits from the OS.
+fn new_licence_key() -> Result<String, getrandom::Error> {
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // no I, L, O, U: easy to read out
+    let mut b = [0u8; 20];
+    getrandom::getrandom(&mut b)?;
+    let chars: Vec<String> = b.iter().map(|x| (ALPHABET[(x & 31) as usize] as char).to_string()).collect();
+    Ok(format!("HL-{}", chars.chunks(5).map(|g| g.concat()).collect::<Vec<_>>().join("-")))
+}
+
+/// Admin action: a new licence for `seats` PCs. Only its SHA-256 is stored; the key is returned once.
+async fn create_licence(app: &App, admin_email: &str, seats: &str) -> Result<Response<Body>, Error> {
+    let Some(seats) = seats.parse::<u32>().ok().filter(|n| (1..=100).contains(n)) else {
+        return reply(400, json!({ "error": "seats must be 1 to 100" }));
+    };
+    let key = new_licence_key()?;
+    let hash = auth::hex(&Sha256::digest(key.as_bytes())); // the same hash register_route checks
+    app.db
+        .put_item()
+        .table_name(&app.licences)
+        .item("licence_hash", s(&hash))
+        .item("seats", n(seats))
+        .item("used", n(0))
+        .item("created_at", n(now()))
+        .item("created_by", s(admin_email))
+        .condition_expression("attribute_not_exists(licence_hash)")
+        .send()
+        .await?;
+    audit(app, admin_email, "licence", &hash[..16]).await?;
+    reply(200, json!({ "key": key, "licence_hash": hash, "seats": seats }))
+}
+
 async fn block_ip(app: &App, admin_email: &str, ip: &str, action: &str) -> Result<Response<Body>, Error> {
     if ip.parse::<std::net::IpAddr>().is_err() {
         return reply(400, json!({ "error": "not an IP address" }));
@@ -699,6 +730,7 @@ async fn admin_route(app: &App, req: &Request) -> Result<Response<Body>, Error> 
         (false, ["reports"]) => list(query(app, &app.events, on_day("r"), 500).await?),
         (false, ["audit"]) => list(query(app, &app.events, on_day("a"), 500).await?),
         (false, ["licences"]) => list(scan(app, &app.licences, None).await?),
+        (true, ["licences", "new"]) => create_licence(app, &user, params.first("seats").unwrap_or("1")).await,
         (false, ["metrics", which @ ("aws" | "cloudflare")]) => metrics(app, which, params.first("range"), params.first("q")).await,
         (true, ["devices", id, action @ ("revoke" | "restore")]) => set_status(app, &user, id, action).await,
         (true, ["ips", ip, action @ ("block" | "unblock")]) => block_ip(app, &user, ip, action).await,
@@ -803,6 +835,18 @@ mod tests {
         assert_eq!(day(951_782_400), "2000-02-29");
         assert_eq!(day(1_700_000_000), "2023-11-14");
         assert_eq!(day(1_798_675_200), "2026-12-31");
+    }
+
+    #[test]
+    fn licence_keys_are_readable_and_unique() {
+        let a = new_licence_key().unwrap();
+        let b = new_licence_key().unwrap();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 3 + 4 * 5 + 3);
+        let groups: Vec<&str> = a.trim_start_matches("HL-").split('-').collect();
+        assert_eq!(groups.len(), 4);
+        assert!(groups.iter().all(|g| g.len() == 5 && g.bytes().all(|c| c.is_ascii_digit() || c.is_ascii_uppercase())));
+        assert!(!a[3..].contains(['I', 'L', 'O', 'U']));
     }
 
     #[test]

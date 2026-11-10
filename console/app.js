@@ -83,12 +83,31 @@ async function act(path, a) {
     toast(`${a.ok}: done.`);
     render();
   } catch (e) {
-    if (e instanceof StepUp) {
-      const again = await ask({ title: "Sign in again to continue", body: `${a.ok} needs a fresh passkey or authenticator check. You will come back to this page.`, ok: "Sign in again" });
-      if (again) login(true);
-    } else {
-      toast(`${a.ok} failed: ${e.message}`);
-    }
+    await actionFailed(e, a.ok);
+  }
+}
+
+async function actionFailed(e, what) {
+  if (e instanceof StepUp) {
+    const again = await ask({ title: "Sign in again to continue", body: `${what} needs a fresh authenticator check. You will come back to this page.`, ok: "Sign in again" });
+    if (again) login(true);
+  } else {
+    toast(`${what} failed: ${e.message}`);
+  }
+}
+
+let newKey = null; // the key just created: shown once on the Licences page, then dropped
+
+async function createLicence(seats) {
+  const n = Number(seats);
+  if (!Number.isInteger(n) || n < 1 || n > 100) return toast("Seats must be a whole number from 1 to 100.");
+  const ok = await ask({ title: "Create a licence?", body: `A new key for ${n} PC${n > 1 ? "s" : ""}. It is shown once: copy it and send it to the tester.`, ok: "Create licence" });
+  if (!ok) return;
+  try {
+    newKey = await api(`licences/new?seats=${n}`, "POST");
+    render();
+  } catch (e) {
+    await actionFailed(e, "Create licence");
   }
 }
 
@@ -326,7 +345,16 @@ const VIEWS = {
   ], "No reports on this day."),
 
   async licences(view) {
-    view.append(header("Licences", "Read only. Licence keys are stored as hashes."), table([
+    const seats = el("input", { type: "number", min: "1", max: "100", value: "1", inputmode: "numeric" });
+    const create = el("div", { class: "tools" }, el("label", { class: "field" }, "Seats (PCs)", seats),
+      el("button", { class: "btn", type: "button", onclick: () => createLicence(seats.value) }, "Create licence"));
+    const shown = newKey;
+    newKey = null;
+    const keyBox = !shown ? "" : el("div", { class: "keybox", role: "status" },
+      el("p", {}, `New licence for ${shown.seats} PC${shown.seats > 1 ? "s" : ""}. Copy it now: it is not shown again.`),
+      el("code", { class: "mono" }, shown.key), " ",
+      el("button", { class: "btn", type: "button", onclick: () => navigator.clipboard.writeText(shown.key).then(() => toast("Key copied.")) }, "Copy"));
+    view.append(header("Licences", "Keys are shown once when created; only their hash is kept."), create, keyBox, table([
       { key: "licence_hash", label: "Licence (SHA-256)", mono: true, render: (r) => el("span", { title: r.licence_hash }, short(r.licence_hash, 16)) },
       { key: "seats", label: "Seats", mono: true, num: true },
       { key: "used", label: "Used", mono: true, num: true },
