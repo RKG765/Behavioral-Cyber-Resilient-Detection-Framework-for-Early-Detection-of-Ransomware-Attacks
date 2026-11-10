@@ -680,5 +680,35 @@ other processes. Plan beta testing around that.
    [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 7. **Obfuscation and packaging:** `obfstr`, TLS pinning, Nuitka builds, Windows service, Inno / WiX
    installer, self-signed signing, signed updates.
+   *Status: built ([`packaging/build.ps1`](../packaging/build.ps1) makes the whole release). The
+   endpoints, server key and update key are compiled into `edr_sensor` with `obfstr`
+   (`release_config()`; the agent falls back to them when the env vars are empty), and none of them
+   appears in plain text in the shipped files. Tier-2 calls trust only 13 pinned roots
+   ([`packaging/pinned_roots.pem`](../packaging/pinned_roots.pem): ISRG, Amazon / Starfield, Google
+   Trust Services, SSL.com). [`haltline_service.py`](../haltline_service.py) runs the agent as the
+   `HaltlineAgent` service (LocalSystem, auto-start, restart on failure), replacing the scheduled
+   task. Nuitka builds `haltline-agent.exe` and `haltline-helper.exe`, and the Inno Setup installer
+   ([`packaging/haltline.iss`](../packaging/haltline.iss)) shows the privacy notice as its "I accept"
+   page, asks for the licence key, registers the service, and runs `install_windows.ps1 -Packaged`
+   for Sysmon and the helper. Everything is signed with a self-signed certificate (PowerShell's
+   `Set-AuthenticodeSignature`, so no osslsigncode needed). Signed updates: the agent checks a
+   manifest signed with the release key ([`packaging/make_manifest.py`](../packaging/make_manifest.py)),
+   then the installer's SHA-256, before running it silently. Tested: agent 36/36 (new t35 signed
+   updates, t36 release settings), pinning against both live hosts (a DigiCert site is refused),
+   manifest sign / verify / tamper, the full build (35 MB installer), the agent exe starting (it stops
+   at the admin check when not elevated), the helper exe running. Not done: the optional LLVM
+   control-flow pass, the self-integrity check, signing the Inno uninstaller, and an update host
+   (this build has no update URL, so updates are off). Real-PC checks are in
+   [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md).*
 8. **Hardening and beta:** replay / stolen-key / synthetic-vector / flood tests within the free limits,
    origin-bypass test, privacy notice, beta group.
+   *Status: tests and privacy notice done; the beta group is yours to recruit.
+   [`tools/hardening_test.py`](../tools/hardening_test.py) attacks the live Worker and Lambda with a
+   throwaway licence and device and then deletes everything it wrote: **25/25 passed on 2026-11-11**
+   (register and seat limit, replay, stale time, edited body, stolen device ID, unregistered and
+   unsigned requests, verdict-only replies to synthetic vectors, the 60/min device limit, origin
+   bypass of register / report / log / admin, a report, revocation on both paths).
+   [`PRIVACY.md`](../PRIVACY.md) is the consent screen. Not covered: the CloudFront path (off until
+   AWS verifies the account), Cloudflare's WAF and rate-limit rules (need the domain), and
+   synthetic-vector *detection* (replies carry no probability, and the device limit caps mass
+   querying, but nothing flags it yet).*

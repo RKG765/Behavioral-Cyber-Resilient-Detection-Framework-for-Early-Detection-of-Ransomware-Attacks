@@ -100,9 +100,20 @@ MIN_SENSOR_EVENTS = 3              # training MIN_LEN: fewer events are never sc
 CLOUD_API_URL   = os.environ.get("EDR_CLOUD_URL", "http://127.0.0.1:8000/score")   # Tier-2 FastAPI server
 
 # ── Signed cloud Tier 2 (#33, docs/PROD_ARCHITECTURE.md 4.1). Set all three to use it instead of server.py ──
-CLOUD_ENDPOINTS = [u.strip().rstrip("/") for u in os.environ.get("EDR_CLOUD_ENDPOINTS", "").split(",") if u.strip()]
+# (#35) A release build bakes the endpoints and keys into edr_sensor (encrypted with obfstr); env vars win.
+RELEASE = edr_sensor.release_config() if hasattr(edr_sensor, "release_config") else {}
+CLOUD_ENDPOINTS = [u.strip().rstrip("/") for u in (os.environ.get("EDR_CLOUD_ENDPOINTS") or RELEASE.get("endpoints", "")).split(",") if u.strip()]
 LICENCE_KEY     = os.environ.get("EDR_LICENCE_KEY", "")
-SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY", "")   # base64 Ed25519 key that must sign every reply
+SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY") or RELEASE.get("server_pubkey", "")   # base64 Ed25519; must sign every reply
+# (#35) TLS pinning: Tier-2 calls trust only these roots (packaging/pinned_roots.pem, shipped next to the exe).
+PINNED_CA       = os.path.join(BASE_DIR, "pinned_roots.pem")
+
+# ── Signed updates (#36): a manifest signed with the release key, checked daily (release builds only) ──
+AGENT_VERSION   = "0.2.0"
+UPDATE_URL      = os.environ.get("EDR_UPDATE_URL") or RELEASE.get("update_url", "")
+UPDATE_PUBKEY   = os.environ.get("EDR_UPDATE_PUBKEY") or RELEASE.get("update_pubkey", "")
+UPDATE_EVERY_S  = 24 * 3600
+STOP = threading.Event()   # set by the Windows service (haltline_service.py) to stop main()
 
 # ── Behavioral monitoring (#16, #21) ──
 MONITOR_WINDOW     = 30            # seconds each unknown process is observed
@@ -873,7 +884,8 @@ class CloudClient:
                        "x-tt-time": stamp, "x-tt-nonce": nonce, "x-amz-content-sha256": body_hash,
                        "x-tt-sig": base64.b64encode(self.key.sign(msg)).decode()}
             try:
-                r = requests.post(base + path, data=raw, headers=headers, timeout=5)
+                r = requests.post(base + path, data=raw, headers=headers, timeout=5,
+                                  verify=PINNED_CA if os.path.exists(PINNED_CA) else True)
                 if r.status_code >= 500 or r.status_code == 429:
                     raise CloudUnavailable(f"HTTP {r.status_code}")
             except requests.exceptions.RequestException as ex:
@@ -912,6 +924,61 @@ def make_cloud_client():
         return None
     logger.info(f"Cloud Tier 2: {len(CLOUD_ENDPOINTS)} endpoint(s), device {client.device_id}")
     return client
+
+
+def verify_update(manifest_raw, sig_b64, pubkey_b64, current=AGENT_VERSION):
+    """(#36) The manifest, if the release key signed these exact bytes and it is newer; else None."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64)).verify(base64.b64decode(sig_b64), manifest_raw)
+        m = json.loads(manifest_raw)
+        newer = tuple(map(int, m["version"].split("."))) > tuple(map(int, current.split(".")))
+        if newer and m["installer"].startswith("https://") and len(m["sha256"]) == 64:
+            return m
+    except Exception:
+        pass
+    return None
+
+
+class UpdateChecker:
+    """(#36) Daily: fetch the signed manifest; when newer, download the installer, check its
+    SHA-256 against the signed manifest, and run it silently (it stops and replaces this service)."""
+
+    def __init__(self):
+        self._stop = threading.Event()
+
+    def monitor(self):
+        delay = 60   # first check a minute after start
+        while not self._stop.wait(delay):
+            delay = UPDATE_EVERY_S
+            try:
+                self.check()
+            except Exception as e:
+                logger.warning(f"[UPDATE] check failed: {e}")
+
+    def check(self):
+        # The signature and the hash protect these downloads, so any CA may serve them (e.g. GitHub).
+        raw = requests.get(UPDATE_URL, timeout=20).content
+        sig = requests.get(UPDATE_URL + ".sig", timeout=20).text.strip()
+        m = verify_update(raw, sig, UPDATE_PUBKEY)
+        if m is None:
+            return None
+        data = requests.get(m["installer"], timeout=300).content
+        if hashlib.sha256(data).hexdigest() != m["sha256"].lower():
+            logger.error(f"[UPDATE] {m['version']}: installer hash does not match the signed manifest -- not installed")
+            return None
+        path = os.path.join(IPC_DIR, "updates", f"Haltline-Setup-{m['version']}.exe")   # SYSTEM/admins only (ACL)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        logger.info(f"[UPDATE] installing {m['version']} (now {AGENT_VERSION})")
+        import subprocess
+        subprocess.Popen([path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], close_fds=True,
+                         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+        return path
+
+    def stop(self):
+        self._stop.set()
 
 
 def ask_tier2(payload):
@@ -1834,6 +1901,11 @@ def main():
     )
     bm_thread.start()
 
+    # ── Signed updates (#36): only release builds carry an update URL and key ──
+    updater = UpdateChecker()
+    if UPDATE_URL and UPDATE_PUBKEY:
+        threading.Thread(target=updater.monitor, name="Updates", daemon=True).start()
+
     # ── Start Resource Watchdog (#13) ───────────────────────
     watchdog = ResourceWatchdog()
     wd_thread = threading.Thread(
@@ -1861,7 +1933,7 @@ def main():
         c = wmi.WMI()
         watcher = c.Win32_ProcessStartTrace.watch_for()
 
-        while True:
+        while not STOP.is_set():
             # (#25) finite timeout so Ctrl+C / shutdown is honoured
             try:
                 event = watcher(timeout_ms=1000)
@@ -1885,6 +1957,7 @@ def main():
         decision_watcher.stop()
         behavior_monitor.stop()
         watchdog.stop()
+        updater.stop()
         if hasattr(sequence_extractor, "stop"):
             sequence_extractor.stop()
         if whitelist_db:

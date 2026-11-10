@@ -224,3 +224,55 @@ local sample data (`?demo`) at desktop and phone width. Nothing below has run on
   is flagged, and quiet nights with near-zero traffic don't flag noise.
 - [ ] **Console against the real API:** both pages load through Access + Cognito with a `viewer`
   account, the range picker refetches, and auto-refresh stops while the tab is hidden.
+
+## Step 7: obfuscation and packaging
+
+Built and checked on the dev PC (2026-11-11): `packaging/build.ps1` end to end, the endpoints hidden
+in the shipped files, pinning against both live hosts, the signed-update logic (t35), the agent exe
+starting and the helper exe running. Not yet run on a clean PC:
+
+- [ ] **Install** `Haltline-Setup-<version>.exe` on a clean Windows 10 and 11 PC (as admin): the
+  privacy page, the licence page, the `HaltlineAgent` service running as LocalSystem (auto-start,
+  restart on failure), Sysmon installed and signature-checked, the helper logon task, and the agent
+  registering with the cloud (agent.log: "Cloud Tier 2: 2 endpoint(s), device ...").
+- [ ] **The packaged agent elevated:** the ONNX model, `edr_sensor` and WMI all load inside the
+  Nuitka build (only the start-up up to the admin check has run).
+- [ ] **Service stop / restart:** `Stop-Service HaltlineAgent` ends `main()` within a few seconds;
+  killing the process makes Windows restart it after 60 s.
+- [ ] **Upgrade:** installing a newer version keeps the licence key (also with `/VERYSILENT`) and
+  replaces the files while the helper is running (`CloseApplications=force`). The helper is only
+  restarted at the next logon.
+- [ ] **Uninstall:** removes the service, the helper task and the files. Sysmon stays installed.
+- [ ] **Defender / SmartScreen** with the self-signed certificate: note what testers see, and whether
+  importing `build\haltline-signing.cer` into Trusted People helps. Real signing (SignPath or a
+  paid certificate) is still open.
+- [ ] **Signed update end to end:** host `latest.json` + `.sig` and an installer, build with
+  `-UpdateUrl` / `-UpdatePubkey`, and confirm an installed older version updates itself within a
+  day (or at a service restart plus one minute).
+- [ ] **Pinning over time:** if Cloudflare or AWS moves a host to a CA outside
+  `packaging/pinned_roots.pem`, Tier 2 fails safe (the agent asks the user). Re-check the chains
+  before each release.
+- [ ] **Licence key storage:** it is in the service's registry `Environment` value, which local
+  users can read. Decide whether that's acceptable for one-seat consumer licences.
+
+## Step 8: hardening and beta
+
+- [x] **Live attack tests** (`python tools/hardening_test.py --worker ... --lambda ... --server-pubkey
+  ... --kv-namespace ...`). *2026-11-11, 25/25 PASS against haltline-tier2.rkg270954.workers.dev
+  and the Lambda URL: register through the Worker (signed), a second device on a 1-seat licence 403;
+  score on both paths 200 + signed with only `verdict` / `request_id` / `nonce`; on both paths replay
+  401, 400-second-old time 401, edited body 401, stolen device ID with another key 401, unregistered
+  key 401, unsigned 401; 5 synthetic out-of-range vectors got verdicts only; 70 requests in a minute
+  gave 53 x 200 and 17 x 429; register / report / log / admin on the Lambda URL 404 with no or a
+  wrong origin secret; a report 200 + signed; revocation 403 on the Lambda at once and on the Worker
+  after 1 s. All test rows, the licence, the device and its KV entry were deleted afterwards.*
+- [ ] **Same tests through the CloudFront path** once AWS verifies the account and
+  `cloudfront_enabled` is on.
+- [ ] **Cloudflare WAF and rate-limit rules** (need the domain): unsigned junk dropped before the
+  Worker, more than the per-IP limit blocked for 10 s.
+- [ ] **Synthetic-vector detection:** not built. Mass querying is capped by the device limit and
+  sees only verdicts; decide whether the console should flag devices that send out-of-range vectors.
+- [ ] **Privacy notice:** read through `PRIVACY.md` (the installer's consent page), confirm the
+  retention and deletion promises match how you'll operate, and add a contact address.
+- [ ] **Beta group:** recruit testers, give each a licence key, collect feedback on alerts and false
+  positives.

@@ -17,6 +17,7 @@ extension-module = ["pyo3/extension-module"]
 pyo3 = { version = "0.22", features = ["abi3-py38"] }
 regex = "1"
 roxmltree = "0.20"
+obfstr = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_EventLog", "Win32_Security_Cryptography"] }
@@ -28,3 +29,4 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 [profile.release]
 lto = true
 codegen-units = 1
+strip = true

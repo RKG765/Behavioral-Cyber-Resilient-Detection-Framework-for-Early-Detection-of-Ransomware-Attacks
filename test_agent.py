@@ -599,7 +599,7 @@ def t30_cloud_client_signs_verifies_and_fails_over():
         serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
 
     calls = []
-    def fake_post(url, data, headers, timeout):
+    def fake_post(url, data, headers, timeout, **kw):
         calls.append(url)
         if url.startswith("https://primary"):
             raise agent.requests.exceptions.ConnectionError("down")
@@ -623,7 +623,7 @@ def t30_cloud_client_signs_verifies_and_fails_over():
         assert calls[-1] == "https://fallback/v1/score" and len(calls) == 3, "fallback first while primary is down"
 
         forged = ed25519.Ed25519PrivateKey.generate()
-        def forged_post(url, data, headers, timeout):
+        def forged_post(url, data, headers, timeout, **kw):
             body = json.dumps({"verdict": "BENIGN", "nonce": headers["x-tt-nonce"]}).encode()
             return _Reply(body, forged.sign(body))
         agent.requests.post = forged_post
@@ -753,6 +753,61 @@ def t34_reports_upload_or_wait_in_outbox():
     with open(agent.REPORTS_OUTBOX, encoding="utf-8") as f:
         assert f.read() == "", "outbox empty once everything is sent"
     agent.cloud_client = None
+
+
+@test
+def t35_signed_update_needs_release_key_newer_version_and_matching_hash():
+    """(#36) only a manifest signed by the release key, newer, with a matching installer hash runs"""
+    import base64, hashlib, json, subprocess
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    rel = ed25519.Ed25519PrivateKey.generate()
+    pub = base64.b64encode(rel.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    installer = b"MZ fake installer"
+    def manifest(version, sha=hashlib.sha256(installer).hexdigest(), url="https://dl.example/setup.exe"):
+        raw = json.dumps({"version": version, "installer": url, "sha256": sha}).encode()
+        return raw, base64.b64encode(rel.sign(raw)).decode()
+
+    raw, sig = manifest("9.0.0")
+    assert agent.verify_update(raw, sig, pub)["version"] == "9.0.0"
+    assert agent.verify_update(raw.replace(b"9.0.0", b"9.0.1"), sig, pub) is None, "edited manifest"
+    other = ed25519.Ed25519PrivateKey.generate()
+    assert agent.verify_update(raw, base64.b64encode(other.sign(raw)).decode(), pub) is None, "wrong key"
+    assert agent.verify_update(*manifest(agent.AGENT_VERSION), pub) is None, "not newer"
+    assert agent.verify_update(*manifest("9.0.0", url="http://dl.example/setup.exe"), pub) is None, "plain http"
+
+    served, ran = {}, []
+    class R:
+        def __init__(self, b): self.content, self.text = b, b.decode(errors="replace")
+    orig = (agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY)
+    agent.requests.get = lambda url, timeout: R(served[url])
+    subprocess.Popen = lambda args, **kw: ran.append(args)
+    agent.UPDATE_URL, agent.UPDATE_PUBKEY = "https://u.example/latest.json", pub
+    try:
+        raw, sig = manifest("9.0.0", sha="0" * 64)   # signed, but the download doesn't match
+        served.update({agent.UPDATE_URL: raw, agent.UPDATE_URL + ".sig": sig.encode(), "https://dl.example/setup.exe": installer})
+        assert agent.UpdateChecker().check() is None and ran == [], "hash mismatch must not run"
+        raw, sig = manifest("9.0.0")
+        served.update({agent.UPDATE_URL: raw, agent.UPDATE_URL + ".sig": sig.encode()})
+        path = agent.UpdateChecker().check()
+        assert ran and ran[0][0] == path and "/VERYSILENT" in ran[0], ran
+        with open(path, "rb") as f:
+            assert f.read() == installer
+        os.remove(path)
+    finally:
+        agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY = orig
+
+
+@test
+def t36_release_build_settings_and_pinned_roots():
+    """(#35) edr_sensor carries release settings (empty in dev builds); the pinned roots ship with the build"""
+    if not hasattr(agent.edr_sensor, "release_config"):
+        log("edr_sensor without release_config (old build) -- skipped"); return
+    cfg = agent.edr_sensor.release_config()
+    assert set(cfg) == {"endpoints", "server_pubkey", "update_url", "update_pubkey"}, cfg
+    pem = os.path.join(os.path.dirname(os.path.abspath(agent.__file__)), "packaging", "pinned_roots.pem")
+    with open(pem, encoding="utf-8") as f:
+        assert f.read().count("BEGIN CERTIFICATE") == 13
 
 
 # ───────────────────────── summary ─────────────────────────

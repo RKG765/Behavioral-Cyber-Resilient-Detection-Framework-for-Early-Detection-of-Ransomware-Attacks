@@ -165,11 +165,24 @@ impl DeviceKey {
     }
 }
 
+/// Settings baked in by a release build (build.rs reads HALTLINE_* at compile time; empty in dev builds).
+/// obfstr encrypts them, so the endpoints and keys don't show up in `strings` on the binary.
+#[pyfunction]
+fn release_config() -> HashMap<&'static str, String> {
+    HashMap::from([
+        ("endpoints", obfstr::obfstr!(env!("HALTLINE_ENDPOINTS")).to_string()),
+        ("server_pubkey", obfstr::obfstr!(env!("HALTLINE_SERVER_PUBKEY")).to_string()),
+        ("update_url", obfstr::obfstr!(env!("HALTLINE_UPDATE_URL")).to_string()),
+        ("update_pubkey", obfstr::obfstr!(env!("HALTLINE_UPDATE_PUBKEY")).to_string()),
+    ])
+}
+
 #[pymodule]
 fn edr_sensor(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Sensor>()?;
     #[cfg(windows)]
     m.add_class::<DeviceKey>()?;
+    m.add_function(wrap_pyfunction!(release_config, m)?)?;
     m.add_function(wrap_pyfunction!(feature_names, m)?)?;
     m.add_function(wrap_pyfunction!(compute_features, m)?)?;
     m.add("FEATURE_DIM", features::FEATURE_DIM)?;

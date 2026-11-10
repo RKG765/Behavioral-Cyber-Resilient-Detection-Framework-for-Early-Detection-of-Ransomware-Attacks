@@ -8,6 +8,9 @@
       -NoTask              don't register the auto-start task (run agent.py yourself)
       -ApplySysmonConfig   apply this project's Sysmon config to an EXISTING Sysmon install
       -Uninstall           remove the auto-start task (add -RemoveSysmon to uninstall Sysmon too)
+      -Packaged            called by the Haltline installer (packaging/haltline.iss): no Python or Rust,
+                           no agent task (the installer registers the HaltlineAgent service); sets up
+                           Sysmon, the ask-mode folders and the helper logon task for haltline-helper.exe
 
   What it does:
       1. pip install -r requirements.txt
@@ -23,7 +26,8 @@ param(
     [switch]$NoTask,
     [switch]$ApplySysmonConfig,
     [switch]$Uninstall,
-    [switch]$RemoveSysmon
+    [switch]$RemoveSysmon,
+    [switch]$Packaged
 )
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -73,6 +77,7 @@ if ($Uninstall) {
     return
 }
 
+if (-not $Packaged) {
 # ─────────────────────────── 1. Python deps ───────────────────────────
 Step "Checking Python"
 $py = (Get-Command python -ErrorAction SilentlyContinue).Source
@@ -101,6 +106,7 @@ if ($hasSensor) {
     Write-Warning ("Rust (cargo) not found -- edr_sensor not built. The agent will run on SIMULATED " +
                    "features (no real detection). Install Rust from https://rustup.rs and re-run.")
 }
+}  # -not $Packaged
 
 # ─────────────────────────── 3. Sysmon ───────────────────────────
 Step "Sysmon"
@@ -120,10 +126,11 @@ if (Get-Service Sysmon64 -ErrorAction SilentlyContinue) {
 Get-Service Sysmon64 | Format-Table Name, Status -AutoSize
 
 # ─────────────────────────── 4. auto-start task ───────────────────────────
-if ($NoTask) {
+if ($NoTask -and -not $Packaged) {
     Step "Done. Start the agent yourself:  python agent.py --mode $Mode   (elevated)"
     return
 }
+if (-not $Packaged) {
 Step "Registering scheduled task $TaskName (SYSTEM, at startup, mode=$Mode)"
 $action = New-ScheduledTaskAction -Execute $py -Argument "`"$(Join-Path $Root 'agent.py')`" --mode $Mode" -WorkingDirectory $Root
 $trigger = New-ScheduledTaskTrigger -AtStartup
@@ -133,6 +140,7 @@ $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-T
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
     -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
+}
 
 # Ask mode (#34): the agent writes alerts, the user's helper writes decisions.
 Step "Ask-mode folders and the Telltale helper (starts at every logon)"
@@ -140,12 +148,17 @@ foreach ($d in "alerts", "decisions") { New-Item -ItemType Directory -Force -Pat
 & icacls $IpcDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 & icacls (Join-Path $IpcDir "alerts") /grant "*S-1-5-4:(OI)(CI)RX" | Out-Null      # INTERACTIVE users: read alerts
 & icacls (Join-Path $IpcDir "decisions") /grant "*S-1-5-4:(OI)(CI)RXW" | Out-Null  # ...and write decisions
-$pyw = Join-Path (Split-Path $py) "pythonw.exe"
-$hAction = New-ScheduledTaskAction -Execute $pyw -Argument "`"$(Join-Path $Root 'telltale_helper.py')`"" -WorkingDirectory $Root
+if ($Packaged) {
+    $hAction = New-ScheduledTaskAction -Execute (Join-Path $Root "haltline-helper.exe") -WorkingDirectory $Root
+} else {
+    $pyw = Join-Path (Split-Path $py) "pythonw.exe"
+    $hAction = New-ScheduledTaskAction -Execute $pyw -Argument "`"$(Join-Path $Root 'telltale_helper.py')`"" -WorkingDirectory $Root
+}
 $hTrigger = New-ScheduledTaskTrigger -AtLogOn
 $hPrincipal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited   # every signed-in user, not elevated
 Register-ScheduledTask -TaskName $HelperTask -Action $hAction -Trigger $hTrigger -Principal $hPrincipal `
     -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)) -Force | Out-Null
+if ($Packaged) { Write-Host "Sysmon, folders and the helper task are set up."; return }
 Start-Sleep -Seconds 3
 Get-ScheduledTask -TaskName $TaskName | Format-Table TaskName, State -AutoSize
 
