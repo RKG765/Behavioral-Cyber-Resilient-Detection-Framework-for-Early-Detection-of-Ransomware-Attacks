@@ -50,21 +50,21 @@ variable "rate_limit_per_10s" {
 # Blocked IPs. The admin console adds entries through the Lists API (step 5).
 resource "cloudflare_list" "blocked" {
   account_id  = var.account_id
-  name        = "telltale_blocked"
+  name        = "haltline_blocked"
   kind        = "ip"
-  description = "IPs blocked from the Telltale SOC console"
+  description = "IPs blocked from the Haltline SOC console"
 }
 
 # Custom rules run before the Worker, so floods of junk never use the Worker's daily quota.
 resource "cloudflare_ruleset" "firewall" {
   zone_id = var.zone_id
-  name    = "telltale firewall"
+  name    = "haltline firewall"
   kind    = "zone"
   phase   = "http_request_firewall_custom"
   rules = [
     {
       description = "Blocked IPs (SOC console)"
-      expression  = "(ip.src in $telltale_blocked)"
+      expression  = "(ip.src in $haltline_blocked)"
       action      = "block"
       enabled     = true
     },
@@ -81,7 +81,7 @@ resource "cloudflare_ruleset" "firewall" {
 # The free plan allows one rate-limiting rule: fixed 10 s window, 10 s block, counted per IP.
 resource "cloudflare_ruleset" "rate_limit" {
   zone_id = var.zone_id
-  name    = "telltale rate limit"
+  name    = "haltline rate limit"
   kind    = "zone"
   phase   = "http_ratelimit"
   rules = [
@@ -143,10 +143,10 @@ resource "cloudflare_zone_setting" "hsts" {
 # every zone; nothing to configure (checked in docs/INTEGRATION_TESTS.md).
 
 # ───────────── SOC console (plan 6.4): Pages, admin.<domain>, Access in front ─────────────
-# Direct-upload project (no Git link): `npx wrangler pages deploy console --project-name telltale-console`.
+# Direct-upload project (no Git link): `npx wrangler pages deploy console --project-name haltline-console`.
 resource "cloudflare_pages_project" "console" {
   account_id        = var.account_id
-  name              = "telltale-console"
+  name              = "haltline-console"
   production_branch = "main"
 }
 
@@ -168,15 +168,15 @@ resource "cloudflare_dns_record" "console" {
 
 resource "cloudflare_zero_trust_list" "admins" {
   account_id  = var.account_id
-  name        = "telltale_admins"
+  name        = "haltline_admins"
   type        = "EMAIL"
-  description = "Who may reach the Telltale SOC console"
+  description = "Who may reach the Haltline SOC console"
   items       = [for e in var.admin_emails : { value = e }]
 }
 
 resource "cloudflare_zero_trust_access_policy" "admins" {
   account_id = var.account_id
-  name       = "Telltale admins"
+  name       = "Haltline admins"
   decision   = "allow"
   include    = [{ email_list = { id = cloudflare_zero_trust_list.admins.id } }]
 }
@@ -184,7 +184,7 @@ resource "cloudflare_zero_trust_access_policy" "admins" {
 # The pages.dev names are covered too, so the console is never reachable around Access.
 resource "cloudflare_zero_trust_access_application" "console" {
   account_id       = var.account_id
-  name             = "Telltale SOC console"
+  name             = "Haltline SOC console"
   type             = "self_hosted"
   session_duration = "8h"
   destinations = [
@@ -200,14 +200,14 @@ resource "cloudflare_zero_trust_access_application" "console" {
 # Pages validates (and renews) the admin. certificate over this path, so Access must let it through.
 resource "cloudflare_zero_trust_access_policy" "acme" {
   account_id = var.account_id
-  name       = "Telltale console certificate checks"
+  name       = "Haltline console certificate checks"
   decision   = "bypass"
   include    = [{ everyone = {} }]
 }
 
 resource "cloudflare_zero_trust_access_application" "acme" {
   account_id = var.account_id
-  name       = "Telltale console ACME challenge"
+  name       = "Haltline console ACME challenge"
   type       = "self_hosted"
   destinations = [
     { type = "public", uri = "${var.admin_hostname}/.well-known/acme-challenge/*" },

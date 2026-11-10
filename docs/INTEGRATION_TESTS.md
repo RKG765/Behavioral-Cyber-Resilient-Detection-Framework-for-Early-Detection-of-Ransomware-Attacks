@@ -9,14 +9,21 @@ Each item lists what to check and how. "Agent" means the service running as SYST
 
 ## Step 1: Tier-2 scorer
 
-- [ ] **Worker request handling in the real runtime.** `npx wrangler dev`, then POST a good body
+- [x] **Worker request handling in the real runtime.** `npx wrangler dev`, then POST a good body
   (200 + verdict), bad JSON (400), 98 features (400) and a wrong path (404). So far only the scoring
   code has run, as WASM in Node.
-- [ ] **WASM scoring inside Workers** gives the same verdicts as `parity_check.py` (send dataset rows
-  107 → KILL and 3 → BENIGN).
-- [ ] **Wrangler build command** (`[build]` in `worker/wrangler.toml`) works on the deploy machine / CI.
-- [ ] **Lambda arm64 build:** `cargo lambda build --release --arm64 --features lambda --bin lambda`
-  succeeds, and the `bootstrap` zip starts on `provided.al2023`.
+  *2026-11-08, PASS on the deployed `haltline-tier2.rkg270954.workers.dev` with a test device key in KV
+  (since deleted): 200 + signed verdict, bad JSON 400, 98 features 400, bad signature 401, stale time 401,
+  unknown device 401, wrong path 404.*
+- [x] **WASM scoring inside Workers** gives the same verdicts as `parity_check.py` (send dataset rows
+  107 → KILL and 3 → BENIGN). *2026-11-08, PASS: 107 → KILL, 3 → BENIGN; the Ed25519 reply signature
+  verifies with the server public key.*
+- [x] **Wrangler build command** (`[build]` in `worker/wrangler.toml`) works on the deploy machine / CI.
+  *2026-11-08, PASS on the dev PC (wrangler 4.158.0); CI not set up.*
+- [x] **Lambda arm64 build:** `cargo lambda build --release --arm64 --features lambda --bin lambda`
+  succeeds, and the `bootstrap` zip starts on `provided.al2023`. *2026-11-10, PASS: built on the dev PC
+  with cargo-lambda 1.9.2 and pip `ziglang` (put its `zig.exe` folder on PATH; `python3` is the Store stub
+  on Windows), 5 MB zip; it starts and answers on `provided.al2023` arm64 in ap-south-1.*
 - [ ] **Real latency:** end-to-end round trip from a PC in each target region, to the Worker and to the
   CloudFront fallback (p50 / p99), plus Lambda cold-start time.
 
@@ -29,7 +36,11 @@ Each item lists what to check and how. "Agent" means the service running as SYST
   and the console shows lower trust.
 - [ ] **Register end to end:** agent → Worker → CloudFront → Lambda. The licence seat is taken once
   (`used` +1), the device item is written with `first_ip`, the KV entry appears, and the reply is
-  signed. Re-registering must not take another seat.
+  signed. Re-registering must not take another seat. *2026-11-10, PASS without CloudFront (Worker →
+  direct Lambda URL, see Step 3) with a scratch client signing like `agent.CloudClient`: register 200 +
+  signed, seat used 1/1, device `active`, KV entry written; score 200 + signed through the Worker and the
+  direct Lambda URL (same verdict); report 200 + signed and saved; request-log rows written. Test data
+  deleted afterwards. Still to do: the real agent, re-register, and the CloudFront path.*
 - [ ] **Licence errors:** unknown licence → 403, full licence → 403; no device item written.
 - [ ] **DynamoDB conditional writes:** the `ConditionalCheckFailed` paths for the seat update and
   the device put behave as coded (needs real DynamoDB, or DynamoDB Local).
@@ -73,8 +84,15 @@ Each item lists what to check and how. "Agent" means the service running as SYST
 - [ ] **TLS settings:** Full (strict), minimum TLS 1.2, Always Use HTTPS, HSTS. Check with an SSL test.
 - [ ] **CloudFront → Lambda URL with OAC:** a direct call to the Function URL is refused (403). A call
   through CloudFront with `x-amz-content-sha256` works; without the header it fails.
-- [ ] **Origin request policy** forwards the `x-tt-*` headers, `content-type`, `x-amz-content-sha256`
-  and the viewer IP/country headers to the Lambda.
+- [ ] **Origin request policy** forwards the `x-tt-*` headers, `content-type` and the viewer IP/country
+  headers to the Lambda. *2026-11-10: CloudFront rejects `x-amz-content-sha256` in an origin request
+  policy (InvalidArgument), so it was removed from both policies; OAC is expected to pass the viewer's
+  header itself. Check that a POST through CloudFront still works.*
+- [ ] **CloudFront allowed on the account:** the first apply failed with "Your account must be verified
+  before you can add new CloudFront resources" (new Free plan account). Open an AWS Support case; until
+  then `cloudfront_enabled = false` makes the Lambda URL public (origin secret and device signatures still
+  required) and the Worker calls it directly. After verification: set it to `true`, apply, put the new
+  `api_url` in `worker/wrangler.toml` and redeploy the Worker.
 - [ ] **CloudFront edge filter function** runs in the real CloudFront runtime with the same results as
   `node --test infra/aws/edge_filter.test.mjs`.
 - [ ] **Worker register forwarding through CloudFront:** the Worker's request (with the body hash and
@@ -111,7 +129,10 @@ CloudFront behaviour, Pages, Access). Tested: Rust, Worker, agent and edge-filte
 `terraform validate` for both folders, and the console rendered against local sample data. Nothing
 below has run on real accounts.
 
-- [ ] **Terraform apply** of the step-5 resources in both folders: the two new tables, the Cognito
+- [ ] **Terraform apply** of the step-5 resources in both folders: *2026-11-10, infra/aws applied (tables,
+  Lambda, Cognito pool/client/groups/domain/branding, IAM, budget, both origin request policies, edge
+  function, OAC) except the CloudFront distribution (account not verified, see Step 3); infra/cloudflare
+  waits for the domain.* the two new tables, the Cognito
   pool, client, groups, domain and managed-login branding, the admin origin request policy and
   `/admin/*` behaviour, the Pages project, domain and CNAME, the Access list, policy and application.
 - [ ] **DynamoDB free tier:** the four tables total 22 RCU / 23 WCU, and the account has no other

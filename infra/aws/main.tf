@@ -125,7 +125,13 @@ variable "cf_zone_id" {
 variable "cf_worker_script" {
   description = "Worker script name (`name` in worker/wrangler.toml)"
   type        = string
-  default     = "telltale-tier2"
+  default     = "haltline-tier2"
+}
+
+variable "cloudfront_enabled" {
+  description = "false until AWS verifies the account for CloudFront: the Lambda URL is then public and the Worker calls it directly"
+  type        = bool
+  default     = true
 }
 
 variable "cloudfront_distribution_id" {
@@ -147,7 +153,7 @@ locals {
 }
 
 resource "aws_dynamodb_table" "devices" {
-  name           = "telltale_devices"
+  name           = "haltline_devices"
   billing_mode   = "PROVISIONED" # on-demand is not in the free tier
   read_capacity  = local.capacity.devices[0]
   write_capacity = local.capacity.devices[1]
@@ -159,7 +165,7 @@ resource "aws_dynamodb_table" "devices" {
 }
 
 resource "aws_dynamodb_table" "licences" {
-  name           = "telltale_licences"
+  name           = "haltline_licences"
   billing_mode   = "PROVISIONED"
   read_capacity  = local.capacity.licences[0]
   write_capacity = local.capacity.licences[1]
@@ -172,7 +178,7 @@ resource "aws_dynamodb_table" "licences" {
 
 # pk = "<e|r|a>#<UTC day>" (request log, reports, audit), sk = "<ms>#<rand>"; rows expire after 90 days.
 resource "aws_dynamodb_table" "events" {
-  name           = "telltale_events"
+  name           = "haltline_events"
   billing_mode   = "PROVISIONED"
   read_capacity  = local.capacity.events[0]
   write_capacity = local.capacity.events[1]
@@ -200,7 +206,7 @@ resource "aws_dynamodb_table" "events" {
 
 # IP history both ways: pk = "d#<device>" / sk = "ip#<IP>", and pk = "i#<IP>" / sk = "d#<device>".
 resource "aws_dynamodb_table" "index" {
-  name           = "telltale_index"
+  name           = "haltline_index"
   billing_mode   = "PROVISIONED"
   read_capacity  = local.capacity.index[0]
   write_capacity = local.capacity.index[1]
@@ -217,7 +223,7 @@ resource "aws_dynamodb_table" "index" {
 }
 
 resource "aws_iam_role" "api" {
-  name = "telltale-api"
+  name = "haltline-api"
   assume_role_policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }]
@@ -267,7 +273,7 @@ resource "aws_cloudwatch_log_group" "api" {
 }
 
 resource "aws_lambda_function" "api" {
-  function_name                  = "telltale-api"
+  function_name                  = "haltline-api"
   role                           = aws_iam_role.api.arn
   runtime                        = "provided.al2023"
   handler                        = "bootstrap"
@@ -309,39 +315,62 @@ resource "aws_lambda_function" "api" {
   depends_on = [aws_cloudwatch_log_group.api]
 }
 
-# IAM-auth URL: only CloudFront (through OAC) can invoke it.
+# IAM-auth URL: only CloudFront (through OAC) can invoke it. Without CloudFront the URL is public;
+# every route but /v1/score still needs the Worker-only origin secret, and /v1/score a device signature.
 resource "aws_lambda_function_url" "api" {
   function_name      = aws_lambda_function.api.function_name
-  authorization_type = "AWS_IAM"
+  authorization_type = var.cloudfront_enabled ? "AWS_IAM" : "NONE"
 }
 
 resource "aws_lambda_permission" "cloudfront_url" {
+  count                  = var.cloudfront_enabled ? 1 : 0
   statement_id           = "cloudfront-invoke-url"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.api.function_name
   principal              = "cloudfront.amazonaws.com"
-  source_arn             = aws_cloudfront_distribution.api.arn
+  source_arn             = aws_cloudfront_distribution.api[0].arn
   function_url_auth_type = "AWS_IAM"
 }
 
 # Newer function URLs also require lambda:InvokeFunction for the calling principal.
 resource "aws_lambda_permission" "cloudfront_invoke" {
+  count         = var.cloudfront_enabled ? 1 : 0
   statement_id  = "cloudfront-invoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.api.function_name
   principal     = "cloudfront.amazonaws.com"
-  source_arn    = aws_cloudfront_distribution.api.arn
+  source_arn    = aws_cloudfront_distribution.api[0].arn
+}
+
+# shortcut: public function URL while AWS hasn't verified the account for CloudFront; set
+# cloudfront_enabled = true (and the Worker's AWS_API_URL to api_url) once it has.
+resource "aws_lambda_permission" "public_url" {
+  count                  = var.cloudfront_enabled ? 0 : 1
+  statement_id           = "public-invoke-url"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.api.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "public_invoke" {
+  count                    = var.cloudfront_enabled ? 0 : 1
+  statement_id             = "public-invoke-via-url"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.api.function_name
+  principal                = "*"
+  invoked_via_function_url = true # only through the URL, never a direct Invoke call
 }
 
 resource "aws_cloudfront_origin_access_control" "api" {
-  name                              = "telltale-api"
+  name                              = "haltline-api"
   origin_access_control_origin_type = "lambda"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
 }
 
 resource "aws_cloudfront_function" "edge_filter" {
-  name    = "telltale-edge-filter"
+  name    = "haltline-edge-filter"
   runtime = "cloudfront-js-2.0"
   publish = true
   code = replace(file("${path.module}/edge_filter.js"), "__BLOCKED_IPS__",
@@ -349,13 +378,14 @@ resource "aws_cloudfront_function" "edge_filter" {
 }
 
 # Forward only what the Lambda reads. Host must not be forwarded to a function-URL origin.
+# x-amz-content-sha256 is not listed: CloudFront rejects it in policies and OAC passes it itself.
 resource "aws_cloudfront_origin_request_policy" "api" {
-  name = "telltale-api"
+  name = "haltline-api"
   headers_config {
     header_behavior = "whitelist"
     headers {
       items = [
-        "content-type", "x-amz-content-sha256", "x-tt-device", "x-tt-time", "x-tt-nonce", "x-tt-sig",
+        "content-type", "x-tt-device", "x-tt-time", "x-tt-nonce", "x-tt-sig",
         "x-tt-origin-secret", "x-tt-client-ip", "CloudFront-Viewer-Address", "CloudFront-Viewer-Country",
       ]
     }
@@ -371,11 +401,11 @@ resource "aws_cloudfront_origin_request_policy" "api" {
 # /admin/* (from the console's Pages Function) also needs both login tokens and the query string.
 # A policy of its own, because the one above is at CloudFront's 10-header limit.
 resource "aws_cloudfront_origin_request_policy" "admin" {
-  name = "telltale-admin"
+  name = "haltline-admin"
   headers_config {
     header_behavior = "whitelist"
     headers {
-      items = ["content-type", "x-amz-content-sha256", "x-tt-origin-secret", "cf-access-jwt-assertion", "x-tt-admin-token"]
+      items = ["content-type", "x-tt-origin-secret", "cf-access-jwt-assertion", "x-tt-admin-token"]
     }
   }
   cookies_config {
@@ -391,6 +421,7 @@ data "aws_cloudfront_cache_policy" "disabled" {
 }
 
 resource "aws_cloudfront_distribution" "api" {
+  count        = var.cloudfront_enabled ? 1 : 0
   enabled      = true
   comment      = "Telltale Tier-2 fallback + register origin"
   price_class  = var.price_class
@@ -448,7 +479,7 @@ resource "aws_cloudfront_distribution" "api" {
 
 # ───────── admin login layer 2 (plan 6.4): Cognito, Essentials tier (10,000 MAU free), MFA required ─────────
 resource "aws_cognito_user_pool" "admin" {
-  name                = "telltale-admins"
+  name                = "haltline-admins"
   user_pool_tier      = "ESSENTIALS"
   deletion_protection = "ACTIVE"
   username_attributes = ["email"]
@@ -491,7 +522,7 @@ resource "aws_cognito_user_group" "role" {
 
 # Public client (no secret): the console runs authorization code + PKCE in the browser.
 resource "aws_cognito_user_pool_client" "console" {
-  name                                 = "telltale-console"
+  name                                 = "haltline-console"
   user_pool_id                         = aws_cognito_user_pool.admin.id
   generate_secret                      = false
   allowed_oauth_flows_user_pool_client = true
@@ -528,7 +559,7 @@ resource "aws_cognito_managed_login_branding" "console" {
 }
 
 resource "aws_budgets_budget" "free_tier_guard" {
-  name         = "telltale-free-tier-guard"
+  name         = "haltline-free-tier-guard"
   budget_type  = "COST"
   limit_amount = "1"
   limit_unit   = "USD"
@@ -544,12 +575,12 @@ resource "aws_budgets_budget" "free_tier_guard" {
 
 output "api_url" {
   description = "Set as the Worker's AWS_API_URL and the agent's fallback endpoint"
-  value       = "https://${aws_cloudfront_distribution.api.domain_name}"
+  value       = var.cloudfront_enabled ? "https://${aws_cloudfront_distribution.api[0].domain_name}" : trimsuffix(aws_lambda_function_url.api.function_url, "/")
 }
 
 output "cloudfront_distribution_id" {
   description = "Set as cloudfront_distribution_id and apply again, for the Cloud -> AWS page"
-  value       = aws_cloudfront_distribution.api.id
+  value       = var.cloudfront_enabled ? aws_cloudfront_distribution.api[0].id : ""
 }
 
 output "cognito_domain" {

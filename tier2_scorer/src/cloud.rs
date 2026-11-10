@@ -158,7 +158,7 @@ fn aws_specs(a: &Aws) -> Vec<Spec> {
     ];
     for (table, _, _) in a.tables {
         let t = || vec![("TableName", table.clone())];
-        let short = table.trim_start_matches("telltale_");
+        let short = table.trim_start_matches("haltline_");
         for (label, name) in [("reads / s", "ConsumedReadCapacityUnits"), ("writes / s", "ConsumedWriteCapacityUnits")] {
             out.push(Spec { per_s: true, ..spec("DynamoDB", &format!("{short} {label}"), "units", "AWS/DynamoDB", name, t(), "Sum") });
         }
@@ -498,18 +498,18 @@ mod tests {
 
     #[test]
     fn aws_panels_group_scale_and_sum() {
-        let tables = [("telltale_events".to_string(), 5.0, 10.0), ("telltale_index".to_string(), 5.0, 6.0)];
+        let tables = [("haltline_events".to_string(), 5.0, 10.0), ("haltline_index".to_string(), 5.0, 6.0)];
         let cw = client();
-        let a = Aws { cw: &cw, cw_us_east_1: &cw, function: "telltale-api", tables: &tables, distribution: "", queue: "" };
+        let a = Aws { cw: &cw, cw_us_east_1: &cw, function: "haltline-api", tables: &tables, distribution: "", queue: "" };
         let specs = aws_specs(&a);
         assert_eq!(specs.len(), 6 + 2 * 4); // no SQS or CloudFront specs when they aren't configured
         let points: Vec<Vec<(i64, f64)>> = specs
             .iter()
             .map(|s| match (s.name, s.dims[0].1.as_str()) {
                 ("Invocations", _) => vec![(0, 120.0), (120, 60.0)],
-                ("ConsumedWriteCapacityUnits", "telltale_events") => vec![(60, 300.0)],
-                ("ReadThrottleEvents", "telltale_events") => vec![(0, 2.0)],
-                ("WriteThrottleEvents", "telltale_index") => vec![(0, 1.0), (60, 4.0)],
+                ("ConsumedWriteCapacityUnits", "haltline_events") => vec![(60, 300.0)],
+                ("ReadThrottleEvents", "haltline_events") => vec![(0, 2.0)],
+                ("WriteThrottleEvents", "haltline_index") => vec![(0, 1.0), (60, 4.0)],
                 ("Duration", _) => vec![(60, 31.5)],
                 _ => vec![],
             })
@@ -532,7 +532,7 @@ mod tests {
     fn cloudflare_query_and_vars() {
         assert!(cf_query(60).contains("orderBy: [datetimeMinute_ASC]"));
         assert!(cf_query(300).contains("t: datetimeFiveMinutes"));
-        let v = cf_vars("z", "a", "telltale-tier2", 1_700_000_000, 1_700_003_600);
+        let v = cf_vars("z", "a", "haltline-tier2", 1_700_000_000, 1_700_003_600);
         assert_eq!(v["start"], "2023-11-14T22:13:20Z");
         assert_eq!(v["dayStart"], "2023-11-14T00:00:00Z");
     }

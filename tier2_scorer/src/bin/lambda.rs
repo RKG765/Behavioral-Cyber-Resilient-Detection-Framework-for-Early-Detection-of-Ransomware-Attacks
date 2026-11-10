@@ -745,7 +745,7 @@ async fn main() -> Result<(), Error> {
         cw: aws_sdk_cloudwatch::Client::new(&aws),
         cw_us_east_1: aws_sdk_cloudwatch::Client::from_conf(us_east_1),
         logs: aws_sdk_cloudwatchlogs::Client::new(&aws),
-        function: std::env::var("AWS_LAMBDA_FUNCTION_NAME").unwrap_or_else(|_| "telltale-api".into()),
+        function: std::env::var("AWS_LAMBDA_FUNCTION_NAME").unwrap_or_else(|_| "haltline-api".into()),
         tables,
         distribution: opt("CLOUDFRONT_DISTRIBUTION_ID"),
         queue: opt("SQS_QUEUE"),

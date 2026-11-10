@@ -1,16 +1,19 @@
-name = "telltale-tier2"
+name = "haltline-tier2"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
 
 # Device keys, written by the AWS register Lambda: device_id -> {"pk": base64, "status": "active"|"revoked"}.
 # Create with `npx wrangler kv namespace create DEVICES` and put the id here.
-kv_namespaces = [{ binding = "DEVICES", id = "REPLACE_WITH_KV_NAMESPACE_ID" }]
+kv_namespaces = [{ binding = "DEVICES", id = "c277414cdcbf4da2952721417d90d1d5" }]
 
 # Custom domain on your Cloudflare zone (needed for the WAF and rate-limit rules in infra/cloudflare).
-routes = [{ pattern = "api.REPLACE_WITH_YOUR_DOMAIN", custom_domain = true }]
+# shortcut: no domain yet (haltline.eu.org pending), so the Worker runs on workers.dev without the zone's
+# WAF / rate-limit rules; uncomment the route and set workers_dev = false once the zone is active.
+# routes = [{ pattern = "api.REPLACE_WITH_YOUR_DOMAIN", custom_domain = true }]
+workers_dev = true
 
 [vars]
-AWS_API_URL = "https://REPLACE_WITH_AWS_API_HOST" # `terraform output api_url` in infra/aws
+AWS_API_URL = "https://qasi5w5sf7r5vle2fjzj3q6bce0dyqcw.lambda-url.ap-south-1.on.aws" # `terraform output api_url` in infra/aws (direct Lambda URL until CloudFront is allowed)
 
 # Secrets (never in this file):
 #   npx wrangler secret put RESPONSE_SIGNING_SEED   # base64 32-byte Ed25519 seed (see tier2_scorer/README.md)
