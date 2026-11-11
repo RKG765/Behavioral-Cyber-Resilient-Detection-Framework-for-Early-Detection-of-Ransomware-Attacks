@@ -96,6 +96,24 @@ async function actionFailed(e, what) {
   }
 }
 
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const LOGIN = { FORCE_CHANGE_PASSWORD: "Invited", CONFIRMED: "Active", RESET_REQUIRED: "Reset needed" };
+
+async function addAdmin(email, role) {
+  email = email.trim().toLowerCase();
+  if (!/^[^\s@,"]+@[^\s@,"]+\.[^\s@,".]+$/.test(email)) return toast("Enter an email address.");
+  const ok = await ask({ title: `Add ${email} as ${role}?`, body: "AWS emails them a temporary password. On first sign-in they set a password and an authenticator app.", target: email, ok: "Add admin" });
+  if (!ok) return;
+  try {
+    const r = await api(`admins/new?email=${encodeURIComponent(email)}&role=${role}`, "POST");
+    const access = r.access_updated ? "Cloudflare Access allows them too." : "Also add this email to the Access list in Cloudflare Zero Trust, or they can't reach this page.";
+    toast(`${r.email} added as ${r.role}. ${r.invited ? "Invite sent." : "They already had a login."} ${access}`);
+    render();
+  } catch (e) {
+    await actionFailed(e, "Add admin");
+  }
+}
+
 let newKey = null; // the key just created: shown once on the Licences page, then dropped
 
 async function createLicence(seats) {
@@ -360,6 +378,19 @@ const VIEWS = {
       { key: "used", label: "Used", mono: true, num: true },
       { key: "left", label: "Left", num: true, value: (r) => r.seats - r.used, render: (r) => (r.used >= r.seats ? el("span", { class: "chip" }, "Full") : r.seats - r.used) },
     ], await api("licences"), { sort: "left", empty: "No licences issued yet." }));
+    return 0;
+  },
+
+  async admins(view) {
+    const email = el("input", { type: "email", autocomplete: "off", placeholder: "name@example.com" });
+    const role = el("select", {}, ...["admin", "analyst", "viewer"].map((r) => el("option", { value: r }, cap(r))));
+    const add = el("div", { class: "tools" }, el("label", { class: "field" }, "Email", email), el("label", { class: "field" }, "Role", role),
+      el("button", { class: "btn", type: "button", onclick: () => addAdmin(email.value, role.value) }, "Add admin"));
+    view.append(header("Admins", "Who can sign in here. A new admin gets an email from AWS with a temporary password."), add, table([
+      { key: "email", label: "Email" },
+      { key: "role", label: "Role", value: (r) => cap(r.role), render: (r) => cap(r.role) },
+      { key: "status", label: "Login", value: (r) => LOGIN[r.status] ?? r.status, render: (r) => LOGIN[r.status] ?? r.status },
+    ], await api("admins"), { sort: "email", empty: "No admins yet." }));
     return 0;
   },
 

@@ -1,7 +1,20 @@
 // node --test worker/test/auth.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { b64, canonical, deviceId, signedJson, verifyRequest } from "../src/auth.js";
+import { b64, canonical, deviceId, isBlocked, signedJson, verifyRequest } from "../src/auth.js";
+
+test("blocked IPs come from KV and are re-read at most once a minute", async () => {
+  let list = ["9.9.9.9"], reads = 0;
+  const env = { DEVICES: { get: async (key, type) => (reads++, assert.equal(key, "blocked_ips"), assert.equal(type, "json"), list) } };
+  assert.equal(await isBlocked(env, "9.9.9.9", 1000), true);
+  assert.equal(await isBlocked(env, "1.1.1.1", 1001), false);
+  list = [];
+  assert.equal(await isBlocked(env, "9.9.9.9", 1030), true, "cached for 60 s");
+  assert.equal(reads, 1);
+  assert.equal(await isBlocked(env, "9.9.9.9", 1061), false, "unblocked after the cache expires");
+  const broken = { DEVICES: { get: async () => { throw new Error("kv down"); } } };
+  assert.equal(await isBlocked(broken, "9.9.9.9", 9999), false, "a KV error never blocks everyone");
+});
 
 const enc = new TextEncoder();
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");

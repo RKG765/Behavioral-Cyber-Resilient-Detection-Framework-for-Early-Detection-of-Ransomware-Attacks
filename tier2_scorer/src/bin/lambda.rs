@@ -13,6 +13,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use lambda_http::{run, service_fn, Body, Error, Request, RequestExt, Response};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use aws_sdk_cognitoidentityprovider::types::{AttributeType, DeliveryMediumType};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -36,8 +37,10 @@ struct App {
     origin_secret: String,
     kv_url: String,
     cf_token: String,
-    list_url: String,
-    lists_token: String,
+    idp: aws_sdk_cognitoidentityprovider::Client, // console admins (Admins page)
+    pool_id: String,
+    access_list_url: String, // the Access email list; "" until CF_ACCESS_LIST_ID and CF_ZT_TOKEN are set
+    zt_token: String,
     access: Jwks,
     cognito: Jwks,
     http: reqwest::Client,
@@ -613,34 +616,95 @@ async fn create_licence(app: &App, admin_email: &str, seats: &str) -> Result<Res
     reply(200, json!({ "key": key, "licence_hash": hash, "seats": seats }))
 }
 
+/// Blocked IPs are a JSON array in KV under "blocked_ips"; the Worker refuses them (worker/src/auth.js).
+/// A Cloudflare IP List would need a zone firewall, which workers.dev doesn't have.
 async fn block_ip(app: &App, admin_email: &str, ip: &str, action: &str) -> Result<Response<Body>, Error> {
     if ip.parse::<std::net::IpAddr>().is_err() {
         return reply(400, json!({ "error": "not an IP address" }));
     }
-    let ok = if action == "block" {
-        let body = json!([{ "ip": ip, "comment": format!("blocked by {admin_email}") }]);
-        let r = app.http.post(&app.list_url).bearer_auth(&app.lists_token).json(&body).send().await;
-        r.is_ok_and(|r| r.status().is_success())
-    } else {
-        let found: Value = app
-            .http
-            .get(format!("{}?search={ip}", app.list_url))
-            .bearer_auth(&app.lists_token)
-            .send()
-            .await?
-            .json()
-            .await?;
-        let ids: Vec<Value> = found["result"]
-            .as_array()
-            .map(|items| items.iter().filter(|i| i["ip"] == ip).map(|i| json!({ "id": i["id"] })).collect())
-            .unwrap_or_default();
-        let r = app.http.delete(&app.list_url).bearer_auth(&app.lists_token).json(&json!({ "items": ids })).send().await;
+    let url = format!("{}/blocked_ips", app.kv_url);
+    let r = app.http.get(&url).bearer_auth(&app.cf_token).send().await?;
+    let mut list: Vec<String> = match r.status().as_u16() {
+        200 => match r.json().await {
+            Ok(v) => v,
+            Err(_) => return reply(502, json!({ "error": "the edge block list is unreadable; not overwritten", "edge_updated": false })),
+        },
+        404 => Vec::new(),
+        code => return reply(502, json!({ "error": format!("edge block list unavailable ({code})"), "edge_updated": false })),
+    };
+    list.retain(|x| x != ip);
+    if action == "block" {
+        list.push(ip.to_string());
+    }
+    let put = app.http.put(&url).bearer_auth(&app.cf_token).json(&list).send().await;
+    let ok = put.is_ok_and(|r| r.status().is_success());
+    audit(app, admin_email, action, ip).await?;
+    // shortcut: the AWS fallback path doesn't read this list; it uses the `blocked_ips` Terraform variable.
+    reply(if ok { 200 } else { 502 }, json!({ "ip": ip, "action": action, "edge_updated": ok }))
+}
+
+const ROLES: [&str; 3] = ["admin", "analyst", "viewer"]; // highest first
+
+/// Console admins: the members of the Cognito role groups, each listed once at their highest role.
+async fn admins(app: &App) -> Result<Response<Body>, Error> {
+    let mut out: Vec<Value> = Vec::new();
+    for role in ROLES {
+        // shortcut: first page only (60 users per group), plenty for a small admin team.
+        let page = app.idp.list_users_in_group().user_pool_id(&app.pool_id).group_name(role).send().await?;
+        for u in page.users() {
+            let email = u.attributes().iter().find(|a| a.name() == "email").and_then(|a| a.value()).unwrap_or_default();
+            if !out.iter().any(|o| o["email"] == email) {
+                out.push(json!({ "email": email, "role": role, "status": u.user_status().map(|s| s.as_str()).unwrap_or(""), "enabled": u.enabled() }));
+            }
+        }
+    }
+    reply(200, Value::Array(out))
+}
+
+fn valid_email(e: &str) -> bool {
+    let Some((user, host)) = e.split_once('@') else { return false };
+    e.len() <= 254
+        && !user.is_empty()
+        && host.contains('.')
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains('@')
+        && !e.chars().any(|c| c.is_whitespace() || c.is_control() || c == ',' || c == '"')
+}
+
+/// Admin action: a Cognito login (AWS emails a temporary password) in a role group, plus the
+/// Access email list when a Zero Trust token is configured.
+async fn add_admin(app: &App, admin_email: &str, email: &str, role: &str) -> Result<Response<Body>, Error> {
+    let email = email.trim().to_lowercase();
+    if !valid_email(&email) {
+        return reply(400, json!({ "error": "not an email address" }));
+    }
+    if !ROLES.contains(&role) {
+        return reply(400, json!({ "error": "role must be admin, analyst or viewer" }));
+    }
+    let attr = |name: &str, value: &str| AttributeType::builder().name(name).value(value).build();
+    let created = app
+        .idp
+        .admin_create_user()
+        .user_pool_id(&app.pool_id)
+        .username(&email)
+        .user_attributes(attr("email", &email)?)
+        .user_attributes(attr("email_verified", "true")?)
+        .desired_delivery_mediums(DeliveryMediumType::Email)
+        .send()
+        .await;
+    let invited = match created {
+        Ok(_) => true,
+        Err(e) if e.as_service_error().is_some_and(|s| s.is_username_exists_exception()) => false, // already has a login
+        Err(e) => return Err(e.into()),
+    };
+    app.idp.admin_add_user_to_group().user_pool_id(&app.pool_id).username(&email).group_name(role).send().await?;
+    let access = !app.access_list_url.is_empty() && !app.zt_token.is_empty() && {
+        let r = app.http.patch(&app.access_list_url).bearer_auth(&app.zt_token).json(&json!({ "append": [{ "value": email }] })).send().await;
         r.is_ok_and(|r| r.status().is_success())
     };
-    audit(app, admin_email, action, ip).await?;
-    // shortcut: only Cloudflare's list changes; the AWS fallback's block list is the
-    // `blocked_ips` Terraform variable until the console can republish the CloudFront Function.
-    reply(if ok { 200 } else { 502 }, json!({ "ip": ip, "action": action, "edge_updated": ok }))
+    audit(app, admin_email, &format!("admin.{role}"), &email).await?;
+    reply(200, json!({ "email": email, "role": role, "invited": invited, "access_updated": access }))
 }
 
 /// The Cloud pages: one cached fetch per source and range (plan 6.3).
@@ -705,6 +769,7 @@ async fn admin_route(app: &App, req: &Request) -> Result<Response<Body>, Error> 
     let need = match (post, parts.first().copied()) {
         (true, _) => Role::Admin,
         (false, Some("reports")) => Role::Analyst,
+        (false, Some("admins")) => Role::Admin,
         _ => Role::Viewer,
     };
     let user = match admin_user(app, req, need, post).await {
@@ -731,6 +796,10 @@ async fn admin_route(app: &App, req: &Request) -> Result<Response<Body>, Error> 
         (false, ["audit"]) => list(query(app, &app.events, on_day("a"), 500).await?),
         (false, ["licences"]) => list(scan(app, &app.licences, None).await?),
         (true, ["licences", "new"]) => create_licence(app, &user, params.first("seats").unwrap_or("1")).await,
+        (false, ["admins"]) => admins(app).await,
+        (true, ["admins", "new"]) => {
+            add_admin(app, &user, params.first("email").unwrap_or(""), params.first("role").unwrap_or("viewer")).await
+        }
         (false, ["metrics", which @ ("aws" | "cloudflare")]) => metrics(app, which, params.first("range"), params.first("q")).await,
         (true, ["devices", id, action @ ("revoke" | "restore")]) => set_status(app, &user, id, action).await,
         (true, ["ips", ip, action @ ("block" | "unblock")]) => block_ip(app, &user, ip, action).await,
@@ -789,6 +858,7 @@ async fn main() -> Result<(), Error> {
     };
     let access_team = env("ACCESS_TEAM_DOMAIN")?; // e.g. myteam.cloudflareaccess.com
     let cognito_issuer = env("COGNITO_ISSUER")?; // https://cognito-idp.<region>.amazonaws.com/<pool id>
+    let pool_id = cognito_issuer.rsplit('/').next().unwrap_or_default().to_string();
     let app = App {
         db: aws_sdk_dynamodb::Client::new(&aws),
         devices: env("DEVICES_TABLE")?,
@@ -799,8 +869,10 @@ async fn main() -> Result<(), Error> {
         origin_secret: env("ORIGIN_SECRET")?,
         kv_url: cf(&format!("storage/kv/namespaces/{}/values", env("CF_KV_NAMESPACE")?))?,
         cf_token: env("CF_API_TOKEN")?,
-        list_url: cf(&format!("rules/lists/{}/items", env("CF_LIST_ID")?))?,
-        lists_token: env("CF_LISTS_TOKEN")?,
+        idp: aws_sdk_cognitoidentityprovider::Client::new(&aws),
+        pool_id,
+        access_list_url: if opt("CF_ACCESS_LIST_ID").is_empty() { String::new() } else { cf(&format!("gateway/lists/{}", opt("CF_ACCESS_LIST_ID")))? },
+        zt_token: opt("CF_ZT_TOKEN"),
         access: Jwks::new(
             format!("https://{access_team}/cdn-cgi/access/certs"),
             format!("https://{access_team}"),
@@ -835,6 +907,16 @@ mod tests {
         assert_eq!(day(951_782_400), "2000-02-29");
         assert_eq!(day(1_700_000_000), "2023-11-14");
         assert_eq!(day(1_798_675_200), "2026-12-31");
+    }
+
+    #[test]
+    fn admin_emails_are_checked() {
+        for ok in ["a@b.co", "rkg270954@gmail.com", "first.last+tag@sub.example.org"] {
+            assert!(valid_email(ok), "{ok}");
+        }
+        for bad in ["", "no-at", "@b.co", "a@", "a@b", "a@.b.co", "a@b.co.", "a b@c.co", "a@b@c.co", "a,b@c.co", "a@b.co\n"] {
+            assert!(!valid_email(bad), "{bad:?}");
+        }
     }
 
     #[test]

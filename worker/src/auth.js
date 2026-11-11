@@ -21,6 +21,17 @@ export async function deviceId(publicKey) {
 // shortcut: nonces and rate counts live per isolate, so a replay can succeed on another
 // isolate within SKEW_S (harmless for /v1/score: it only re-reads a verdict); global
 // replay detection comes with the step-5 log pipeline.
+// IPs blocked from the SOC console: a JSON array in KV under "blocked_ips" (the Lambda writes it).
+// Re-read at most once a minute per isolate, so blocking costs almost no KV reads.
+let blocked = { until: 0, ips: new Set() };
+export async function isBlocked(env, ip, now) {
+  if (now >= blocked.until) {
+    const list = await env.DEVICES.get("blocked_ips", "json").catch(() => null);
+    blocked = { until: now + 60, ips: new Set(Array.isArray(list) ? list : []) };
+  }
+  return blocked.ips.has(ip);
+}
+
 const seen = new Map(); // nonce -> expiry (s)
 const usage = new Map(); // device -> [minute, count]
 

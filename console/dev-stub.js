@@ -53,6 +53,7 @@ const reports = [
 ].map((r, i) => ({ ...r, ts: T - 3600 * (5 - i), device: devices[i * 2].device_id, sha256: hex(64), ip: devices[i * 2].last_ip }));
 
 const licences = [[25, 11], [10, 10], [5, 2], [100, 37]].map(([seats, used]) => ({ licence_hash: hex(64), seats, used }));
+const admins = [{ email: "admin@example.com", role: "admin", status: "CONFIRMED", enabled: true }];
 const audit = [
   { ts: T - 7200, admin: "priya@example.com", action: "revoke", target: devices[12].device_id },
   { ts: T - 6900, admin: "priya@example.com", action: "block", target: "192.0.2.199" },
@@ -160,6 +161,12 @@ function route(method, path, params) {
   const [a, b, c] = path.split("/").map(decodeURIComponent);
   if (a === "metrics") return [200, metrics(b, params.get("range"), params.get("q"))];
   const onDay = (rows) => (!day || day === today ? rows : []);
+  if (method === "POST" && a === "admins" && b === "new") {
+    const email = params.get("email"), role = params.get("role");
+    const known = admins.find((x) => x.email === email);
+    if (!known) admins.push({ email, role, status: "FORCE_CHANGE_PASSWORD", enabled: true });
+    return [200, { email, role, invited: !known, access_updated: false }];
+  }
   if (method === "POST" && a === "licences" && b === "new") {
     const seats = Number(params.get("seats") ?? 1);
     const key = "HL-" + Array.from({ length: 4 }, () => hex(5).toUpperCase()).join("-");   // sample only
@@ -189,6 +196,7 @@ function route(method, path, params) {
   if (a === "reports") return [200, onDay(reports)];
   if (a === "audit") return [200, onDay(audit)];
   if (a === "licences") return [200, licences];
+  if (a === "admins") return [200, admins];
   return [404, { error: "not found" }];
 }
 

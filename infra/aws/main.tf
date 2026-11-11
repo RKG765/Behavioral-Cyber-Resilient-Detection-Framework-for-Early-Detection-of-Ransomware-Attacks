@@ -97,15 +97,17 @@ variable "access_aud" {
   type        = string
 }
 
-variable "cf_list_id" {
-  description = "From `terraform output blocked_list_id` in infra/cloudflare"
+variable "cf_access_list_id" {
+  description = "Zero Trust email list behind the console's Access policy; the Admins page appends to it. Empty: add emails by hand"
   type        = string
+  default     = ""
 }
 
-variable "cf_lists_token" {
-  description = "Cloudflare token with Account Filter Lists: Edit only (IP blocking from the console)"
+variable "cf_zt_token" {
+  description = "Cloudflare token with Zero Trust: Edit only (the Admins page adds emails to the Access list). Empty: off"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 # ───────────── Cloud pages (plan 6.3) ─────────────
@@ -267,6 +269,19 @@ resource "aws_iam_role_policy" "observability" {
   })
 }
 
+# The console's Admins page: invite an admin and put them in a role group (this pool only).
+resource "aws_iam_role_policy" "admins" {
+  role = aws_iam_role.api.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["cognito-idp:AdminCreateUser", "cognito-idp:AdminAddUserToGroup", "cognito-idp:ListUsersInGroup"]
+      Resource = aws_cognito_user_pool.admin.arn
+    }]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/telltale-api"
   retention_in_days = 14
@@ -298,8 +313,8 @@ resource "aws_lambda_function" "api" {
       ACCESS_AUD                 = var.access_aud
       COGNITO_ISSUER             = "https://${aws_cognito_user_pool.admin.endpoint}"
       COGNITO_CLIENT_ID          = aws_cognito_user_pool_client.console.id
-      CF_LIST_ID                 = var.cf_list_id
-      CF_LISTS_TOKEN             = var.cf_lists_token
+      CF_ACCESS_LIST_ID          = var.cf_access_list_id
+      CF_ZT_TOKEN                = var.cf_zt_token
       CF_ANALYTICS_TOKEN         = var.cf_analytics_token
       CF_ZONE_ID                 = var.cf_zone_id
       CF_WORKER_SCRIPT           = var.cf_worker_script

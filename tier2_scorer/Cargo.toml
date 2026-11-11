@@ -14,7 +14,7 @@ lambda = [
     "dep:lambda_http", "dep:tokio", "dep:serde", "dep:serde_json", "dep:aws-config", "dep:aws-sdk-dynamodb",
     "dep:reqwest", "dep:p256", "dep:ed25519-dalek", "dep:sha2", "dep:base64", "dep:jsonwebtoken",
     "dep:getrandom", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-cloudwatchlogs",
-    "dep:futures-util",
+    "dep:futures-util", "dep:aws-sdk-cognitoidentityprovider",
 ]
 
 [dependencies]
@@ -33,6 +33,7 @@ sha2 = { version = "0.10", optional = true }
 base64 = { version = "0.22", optional = true }
 aws-sdk-cloudwatch = { version = "1", optional = true }
 aws-sdk-cloudwatchlogs = { version = "1", optional = true }
+aws-sdk-cognitoidentityprovider = { version = "1", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
 
 [[bin]]

@@ -110,7 +110,7 @@ input, button, select { font: inherit; color: inherit; }
 
 .tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; font-weight: 600; color: var(--ink-2); }
-.field input {
+.field input, .field select {
   min-height: 2rem; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r);
   background: var(--card); color: var(--ink); font-size: 0.875rem; font-weight: 400; accent-color: var(--ink);
 }

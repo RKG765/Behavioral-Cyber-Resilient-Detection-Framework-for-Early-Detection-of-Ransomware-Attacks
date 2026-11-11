@@ -6,7 +6,7 @@
 // Bindings (wrangler.toml): KV DEVICES (device_id -> {"pk", "status", "kind"}), var AWS_API_URL,
 // secrets RESPONSE_SIGNING_SEED and ORIGIN_SECRET.
 import scorerModule from "../../tier2_scorer/target/wasm32-unknown-unknown/release/tier2_scorer.wasm";
-import { signedJson, unb64, verifyRequest } from "./auth.js";
+import { isBlocked, signedJson, unb64, verifyRequest } from "./auth.js";
 import { logEvent, queueLog, sampleReject, toAws } from "./log.js";
 
 let scorer; // instantiated once per isolate
@@ -57,6 +57,9 @@ export default {
         return res;
       },
     };
+    if (await isBlocked(env, request.headers.get("cf-connecting-ip") ?? "", Date.now() / 1000)) {
+      return log.reject(json({ error: "blocked" }, 403), "blocked IP");
+    }
     if (request.method === "POST" && path === "/v1/score") return score(request, env, log);
     if (request.method === "POST" && (path === "/v1/register" || path === "/v1/report")) return forward(request, env, path);
     return json({ error: "not found" }, 404);
