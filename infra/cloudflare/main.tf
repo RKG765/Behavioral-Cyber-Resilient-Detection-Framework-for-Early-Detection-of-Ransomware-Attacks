@@ -143,7 +143,8 @@ resource "cloudflare_zone_setting" "hsts" {
 # every zone; nothing to configure (checked in docs/INTEGRATION_TESTS.md).
 
 # ───────────── SOC console (plan 6.4): Pages, admin.<domain>, Access in front ─────────────
-# Direct-upload project (no Git link): `npx wrangler pages deploy console --project-name haltline-console`.
+# Direct-upload project (no Git link): `cd console && npx wrangler pages deploy . --project-name haltline-console`
+# (run inside console/ so the functions/ proxy is deployed too).
 resource "cloudflare_pages_project" "console" {
   account_id        = var.account_id
   name              = "haltline-console"

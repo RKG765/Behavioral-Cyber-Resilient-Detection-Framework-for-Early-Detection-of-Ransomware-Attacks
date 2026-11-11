@@ -6,7 +6,7 @@ Terraform for both clouds (plan: `docs/PROD_ARCHITECTURE.md`, build steps 3, 5 a
 | Folder | What it creates |
 |---|---|
 | `aws/` | DynamoDB tables `haltline_devices`, `haltline_licences`, `haltline_events` (TTL `expires`) and `haltline_index` (provisioned, 22 RCU / 23 WCU of the free 25 / 25; `apply` refuses more), the Lambda (IAM-auth function URL) and its env, CloudFront with Origin Access Control plus an `/admin/*` behaviour, the edge-filter CloudFront Function, the Cognito admin pool (Essentials, MFA required: password + authenticator app, admin-created users only, groups `viewer` / `analyst` / `admin`), its public PKCE app client (15-minute tokens) and managed-login domain, a $1 budget alarm, and the Cloud pages' read-only CloudWatch / Logs permissions |
-| `cloudflare/` | Zone TLS settings (Full strict, TLS 1.2+, HTTPS only, HSTS), a custom rule that drops unsigned API requests, the blocked-IP list, the one free rate-limit rule, Bot Fight Mode **off**; the `telltale-console` Pages project on `admin.<domain>`, and the Access application (also covering its `pages.dev` names) with a policy for the `admin_emails` list, plus a bypass for certificate checks |
+| `cloudflare/` | Zone TLS settings (Full strict, TLS 1.2+, HTTPS only, HSTS), a custom rule that drops unsigned API requests, the blocked-IP list, the one free rate-limit rule, Bot Fight Mode **off**; the `haltline-console` Pages project on `admin.<domain>`, and the Access application (also covering its `pages.dev` names) with a policy for the `admin_emails` list, plus a bypass for certificate checks |
 
 The Worker, its KV namespace and its secrets, and the console's files and secrets, are deployed with
 `wrangler`.
@@ -51,9 +51,9 @@ and the Cognito ID token.
    and `api_url` is the Lambda URL itself. Set it back to `true` after verification and redo step 5.
 6. **Console:** put the `cognito_domain` and `cognito_client_id` outputs into `console/config.js`, then
    ```bash
-   npx wrangler pages secret put AWS_API_URL --project-name telltale-console    # the api_url output
-   npx wrangler pages secret put ORIGIN_SECRET --project-name telltale-console  # same as the Worker's
-   npx wrangler pages deploy console --project-name telltale-console --branch main
+   npx wrangler pages secret put AWS_API_URL --project-name haltline-console    # the api_url output
+   npx wrangler pages secret put ORIGIN_SECRET --project-name haltline-console  # same as the Worker's
+   cd console && npx wrangler pages deploy . --project-name haltline-console --branch main   # run inside console/, or functions/ is left out
    ```
 7. **Admins:** create each Cognito user and add it to a group (`tier2_scorer/README.md` → Setup).
 8. **Agent:** `EDR_CLOUD_ENDPOINTS=https://api.<domain>,<api_url>`, plus the licence and server key.

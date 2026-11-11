@@ -1,4 +1,4 @@
-// Telltale SOC console (plan section 6). Plain JS, no build step.
+// Haltline SOC console (plan section 6). Plain JS, no build step.
 // Login: Cloudflare Access (in front of this site) + Cognito here (PKCE, passkey or TOTP).
 // Everything that comes from devices (names, paths, IPs) is shown with text nodes, never as HTML.
 "use strict";
@@ -352,7 +352,7 @@ const VIEWS = {
   log: (view) => eventsView(view, "Live log", "Every Tier-2 request, newest first. Refreshes every 5 seconds; new rows stay marked until you mark them seen.", () => true, 5000),
   rejected: (view) => eventsView(view, "Rejected", "Requests Tier 2 turned away, and why.", (r) => r.status !== 200, 0),
 
-  reports: (view) => dayView(view, "Reports", "What people sent from the agent's dialog when Telltale stopped an app.", "reports", [
+  reports: (view) => dayView(view, "Reports", "What people sent from the agent's dialog when Haltline stopped an app.", "reports", [
     { key: "ts", label: "Time", render: (r) => when(r.ts) },
     { key: "device", label: "Device", render: (r) => deviceLink(r.device) },
     { key: "name", label: "App" },
@@ -677,7 +677,7 @@ async function draw() {
   const navName = viewName === "device" ? "devices" : viewName;
   const navLink = document.querySelector(`nav a[href="#/${navName}"]`);
   document.querySelectorAll("nav a").forEach((a) => (a === navLink ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
-  document.title = `${viewName === "device" ? "Device" : navLink.textContent} · Telltale SOC`;
+  document.title = `${viewName === "device" ? "Device" : navLink.textContent} · Haltline SOC`;
   const view = $("view");
   const moved = location.hash !== lastRoute; // a refresh redraws quietly; a new page shows a skeleton
   lastRoute = location.hash;
