@@ -12,6 +12,12 @@ kv_namespaces = [{ binding = "DEVICES", id = "c277414cdcbf4da2952721417d90d1d5" 
 # routes = [{ pattern = "api.REPLACE_WITH_YOUR_DOMAIN", custom_domain = true }]
 workers_dev = true
 
+# Per-device limit shared by all isolates in a Cloudflare location (the in-memory count is per isolate).
+[[ratelimits]]
+name = "DEVICE_LIMIT"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
 [vars]
 AWS_API_URL = "https://qasi5w5sf7r5vle2fjzj3q6bce0dyqcw.lambda-url.ap-south-1.on.aws" # `terraform output api_url` in infra/aws (direct Lambda URL until CloudFront is allowed)
 

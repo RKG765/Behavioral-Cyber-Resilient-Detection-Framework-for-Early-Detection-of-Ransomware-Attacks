@@ -20,7 +20,7 @@ async function score(request, env, log) {
   if (!record) return log.reject(json({ error: "unauthorized" }, 401), "unknown device");
   if (record.status !== "active") return log.reject(json({ error: "revoked" }, 403), "revoked");
 
-  const auth = await verifyRequest(request.headers, "POST", "/v1/score", body, unb64(record.pk), Date.now() / 1000);
+  const auth = await verifyRequest(request.headers, "POST", "/v1/score", body, unb64(record.pk), Date.now() / 1000, env.DEVICE_LIMIT);
   if (auth.error) return log.reject(json({ error: auth.error }, auth.status), auth.error);
 
   let features;

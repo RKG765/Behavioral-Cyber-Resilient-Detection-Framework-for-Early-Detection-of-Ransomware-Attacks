@@ -61,7 +61,7 @@ impl Sensor {
     /// Stop the subscription (blocks until in-flight callbacks finish).
     fn stop(&self, py: Python<'_>) {
         let s = self.sub.lock().unwrap().take();
-        py.allow_threads(move || drop(s));
+        py.detach(move || drop(s));
     }
 
     #[getter]
@@ -73,7 +73,7 @@ impl Sensor {
     /// or None while it has fewer than `min_events` buffered events.
     #[pyo3(signature = (pid, min_events = 3))]
     fn features(&self, py: Python<'_>, pid: u32, min_events: usize) -> Option<Vec<f32>> {
-        py.allow_threads(|| self.store.features(pid, min_events)).map(|v| v.to_vec())
+        py.detach(|| self.store.features(pid, min_events)).map(|v| v.to_vec())
     }
 
     /// Image path recorded in the EventID-1 event of the process holding `pid`,
@@ -157,7 +157,7 @@ impl DeviceKey {
 
     /// ECDSA P-256 over SHA-256(data), raw r||s (64 bytes).
     fn sign(&self, py: Python<'_>, data: &[u8]) -> PyResult<std::borrow::Cow<'static, [u8]>> {
-        py.allow_threads(|| self.0.sign(data)).map(Into::into).map_err(PyOSError::new_err)
+        py.detach(|| self.0.sign(data)).map(Into::into).map_err(PyOSError::new_err)
     }
 
     fn delete(&mut self) -> PyResult<()> {

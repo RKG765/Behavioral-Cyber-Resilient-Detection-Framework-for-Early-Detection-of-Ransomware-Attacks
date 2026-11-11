@@ -54,7 +54,8 @@ function underLimit(device, now) {
  * Verifies a signed request against `publicKey` (raw SEC1 P-256 bytes).
  * Returns {device, nonce} or {error, status}.
  */
-export async function verifyRequest(headers, method, path, body, publicKey, now) {
+/** `limiter`: the Workers rate-limiting binding (per Cloudflare location, shared by all isolates there). */
+export async function verifyRequest(headers, method, path, body, publicKey, now, limiter) {
   const [device, time, nonce, sig] = ["x-tt-device", "x-tt-time", "x-tt-nonce", "x-tt-sig"].map(
     (h) => headers.get(h) ?? "",
   );
@@ -72,6 +73,8 @@ export async function verifyRequest(headers, method, path, body, publicKey, now)
   if (!ok || device !== (await deviceId(publicKey))) return { error: "unauthorized", status: 401 };
   if (!remember(nonce, now)) return { error: "unauthorized", status: 401 };
   if (!underLimit(device, now)) return { error: "rate limited", status: 429 };
+  // The per-isolate count above is cheap but parallel connections spread over isolates; this one isn't.
+  if (limiter && !(await limiter.limit({ key: device })).success) return { error: "rate limited", status: 429 };
   return { device, nonce };
 }
 

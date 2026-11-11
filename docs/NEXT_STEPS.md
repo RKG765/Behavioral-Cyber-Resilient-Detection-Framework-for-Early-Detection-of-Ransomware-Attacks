@@ -1,35 +1,52 @@
 # Next steps (resume here)
 
-State on 2026-11-12.
+State on 2026-11-12, end of session.
 
-## Live now
-- **Dashboard:** https://haltline-console.pages.dev, behind Cloudflare Access (Zero Trust team
-  `foreducation`, app "Haltline SOC console", email list `haltline_admins`: rkg270954@gmail.com and
-  rajkumargupta7632@gmail.com, one-time PIN login, 8 h sessions), then the Cognito login (MFA
-  required). Pages secrets `AWS_API_URL` and `ORIGIN_SECRET` are set.
-- **Admins:** both emails are in the Cognito `admin` group (invited: AWS emailed each a temporary
-  password). The **Admins** page adds more (invite + role). Adding them to the Access list happens
-  automatically only once a Cloudflare token with *Zero Trust: Edit* is in `secrets.tfvars` as
-  `cf_zt_token` (then `terraform apply`); until then add the email to `haltline_admins` in Zero Trust
-  by hand.
-- **Licences:** the **Licences** page creates keys (shown once). Guide for testers: `docs/BETA.md`.
-- **IP blocking:** the **IPs** page block button writes KV `blocked_ips`; the Worker refuses those
-  IPs within a minute. The AWS fallback still uses the `blocked_ips` Terraform variable.
-- **Lambda** (with Create licence, Admins, KV blocking) and **Worker** (block list) redeployed;
-  live attack tests pass except the parallel flood check below.
+## Fixed and live today
+- **Dashboard sign-in loop:** two causes, both fixed. (1) The first Pages deploy skipped the
+  `/admin/*` Function (deploy from inside `console/`). (2) The Cognito app client could read
+  `email` but not `email_verified`, so Cognito refused every token (`invalid_grant`); now
+  `read_attributes = ["email", "email_verified"]`, verified with a real code exchange.
+- **Sign-in card** now says why a sign-in failed and offers **Start over**.
+- **Per-device rate limit:** the Worker now also uses Cloudflare's rate-limiting binding
+  (`DEVICE_LIMIT`, 60/60 s, shared by all isolates in a location). Live: 15 of 70 parallel
+  requests refused; attack tests 25/25.
+- **Lambda dependencies:** legacy rustls 0.21 / h2 0.3 removed (AWS SDK default features off),
+  p256 0.14 (patched crypto-bigint). `cargo audit`: 0 vulnerabilities (1 "unmaintained" notice:
+  pin-utils). Redeployed; attack tests 25/25.
 
-## To do
-1. **First sign-in (you):** open the dashboard, enter the Access code from your email, then the
-   temporary password from the AWS email, set a new password (14+ characters) and an authenticator
-   app. Then Licences → Create licence works for real.
-2. **Install the exe on this PC** (licence in `build\licence-this-pc.txt`); check the PC appears
-   under Devices with its IP.
-3. **Release asset:** `build\Haltline-Setup-0.2.0.exe` was rebuilt with the privacy contact; the
-   GitHub v0.2.0 asset is the older build until it is re-uploaded.
-4. **Per-device rate limit is per Worker isolate:** 70 requests over 8 parallel connections all got
-   200 in 1 s (one connection gets 429 after ~53). Fix: Cloudflare's rate-limit rule (needs the
-   domain) or a Durable Object counter per device.
-5. **Beta:** pick testers and follow `docs/BETA.md`.
-6. **Later (outside our control or needs money):** domain (WAF + rate-limit rules), CloudFront once
-   AWS verifies the account, passkeys once the AWS Terraform provider supports passkey MFA
-   (hashicorp/terraform-provider-aws#50110), real code signing (SignPath or a paid certificate).
+## Done in code, not shipped yet
+1. **Agent 0.2.1 security build** (`packaging\build.ps1` was running at the end of the session;
+   check `build\build.log` ends with `exit=0`, else re-run it). Contains: Python packages
+   upgraded (`pip-audit`: 0 known vulnerabilities in requirements.txt), sensor on pyo3 0.29
+   (`cargo audit`: 0), and the licence key moved out of the registry into
+   `C:\ProgramData\Telltale\licence.key` (SYSTEM and Administrators only). Agent tests 37/37.
+2. **Publish 0.2.1:** new GitHub pre-release `v0.2.1` with the new installer (needs your OK to push
+   and publish).
+
+## Your steps
+3. **Sign in** at https://haltline-console.pages.dev (Cloudflare email code, then AWS password +
+   authenticator). Then check the **AWS** and **Cloudflare** pages show live numbers, and try
+   **Licences → Create licence**.
+4. **rajkumargupta7632@gmail.com** has never signed in: use the AWS invite email (temporary
+   password) within 7 days, or add again from the Admins page.
+5. **Install the exe** on this PC (key in `build\licence-this-pc.txt`) and check it appears under
+   Devices with its IP.
+6. **Docker Desktop error** (not caused by this project): restart Windows, or delete
+   `%LOCALAPPDATA%\Docker\run\dockerInference` with Docker closed, or turn off Docker Model Runner.
+
+## Open security items
+7. **Cloudflare token for the Admins page** (optional): a token with *Zero Trust: Edit* as
+   `cf_zt_token` in `infra/aws/secrets.tfvars`, then `terraform apply`, so new admins are added to
+   the Access list automatically.
+8. **AWS fallback path** (Lambda URL) keeps its own per-container rate limit and IP list
+   (`blocked_ips` Terraform variable); fine while it is only a fallback.
+9. **Burp Suite / interception:** the agent pins 13 root CAs, so a Burp CA is refused; requests are
+   device-signed and replies server-signed, so edited or replayed traffic is rejected. The payload
+   inside TLS is not separately encrypted (only behaviour numbers and IDs). In the admin's own
+   browser, whoever controls that browser can always read their own session.
+
+## Later (outside our control or needs money)
+10. Domain (WAF + Cloudflare rate-limit rules), CloudFront once AWS verifies the account, passkeys
+    once the AWS Terraform provider supports passkey MFA (#50110), real code signing (SignPath or a
+    paid certificate), and the beta group (`docs/BETA.md`).

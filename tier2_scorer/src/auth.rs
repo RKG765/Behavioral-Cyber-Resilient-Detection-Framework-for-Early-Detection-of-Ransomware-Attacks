@@ -103,10 +103,10 @@ pub fn secret_eq(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p256::ecdsa::SigningKey;
+    use p256::ecdsa::{signature::Signer as _, SigningKey};
 
     fn signed(key: &SigningKey, body: &[u8], time: i64, nonce: &str) -> (String, String, String) {
-        let pk = key.verifying_key().to_encoded_point(false);
+        let pk = key.verifying_key().to_sec1_point(false);
         let device = device_id(pk.as_bytes());
         let msg = canonical("POST", "/v1/score", &device, &time.to_string(), nonce, &hex(&Sha256::digest(body)));
         let sig: Signature = key.sign(msg.as_bytes());
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn valid_passes_and_tampered_old_replayed_or_flooded_fail() {
         let key = SigningKey::from_slice(&[7u8; 32]).unwrap();
-        let pk = key.verifying_key().to_encoded_point(false);
+        let pk = key.verifying_key().to_sec1_point(false);
         let guard = Guard::default();
         let now = 1_700_000_000;
         let body = br#"{"features":[1]}"#;

@@ -255,6 +255,7 @@ tr.fresh { background: rgb(232 163 23 / 0.16); }
 .problem { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--t1); border-radius: var(--r); background: var(--card); color: var(--t1); font-weight: 600; }
 .signin { max-width: 26rem; margin: 12vh auto 0; padding: 28px; border: 1px solid var(--rule-strong); background: linear-gradient(var(--t3) 0 6px, var(--card) 6px); }
 .signin p { color: var(--ink-2); margin: 8px 0 20px; }
+.signin .signin-error { color: var(--t1); font-weight: 600; }
 
 /* ───────── confirm dialog ───────── */
 dialog { width: min(28rem, calc(100vw - 32px)); padding: 0; border: 1px solid var(--rule-strong); --band: var(--ink); background: linear-gradient(var(--band) 0 6px, var(--card) 6px); color: var(--ink); box-shadow: var(--shadow); }

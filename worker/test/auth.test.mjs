@@ -3,6 +3,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { b64, canonical, deviceId, isBlocked, signedJson, verifyRequest } from "../src/auth.js";
 
+test("the shared rate limiter can refuse a valid request (parallel connections can't dodge it)", async () => {
+  const dev = await device();
+  const body = enc.encode('{"features":[]}');
+  const now = Math.floor(Date.now() / 1000);
+  const seen = [];
+  const limiter = { limit: async ({ key }) => (seen.push(key), { success: seen.length < 2 }) };
+  assert.ok((await verifyRequest(await signed(dev, body, now), "POST", "/v1/score", body, dev.pk, now, limiter)).device);
+  const r = await verifyRequest(await signed(dev, body, now), "POST", "/v1/score", body, dev.pk, now, limiter);
+  assert.equal(r.status, 429);
+  assert.deepEqual(seen, [dev.id, dev.id], "counted per device ID");
+});
+
 test("blocked IPs come from KV and are re-read at most once a minute", async () => {
   let list = ["9.9.9.9"], reads = 0;
   const env = { DEVICES: { get: async (key, type) => (reads++, assert.equal(key, "blocked_ips"), assert.equal(type, "json"), list) } };

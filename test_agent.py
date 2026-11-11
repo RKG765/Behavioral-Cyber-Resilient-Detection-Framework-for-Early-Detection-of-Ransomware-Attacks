@@ -810,6 +810,19 @@ def t36_release_build_settings_and_pinned_roots():
         assert f.read().count("BEGIN CERTIFICATE") == 13
 
 
+@test
+def t37_licence_comes_from_a_protected_file():
+    """(#35) read_secret returns the stripped file contents, or "" when the file is missing"""
+    import tempfile
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "licence.key")
+    assert agent.read_secret(p) == "", "missing file -> empty"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("  HL-ABCDE-12345-FGHJK-67890\r\n")
+    assert agent.read_secret(p) == "HL-ABCDE-12345-FGHJK-67890"
+    os.remove(p); os.rmdir(d)
+
+
 # ───────────────────────── summary ─────────────────────────
 for p in SPAWNED:
     try: p.kill()

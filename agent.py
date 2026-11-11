@@ -109,7 +109,7 @@ SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY") or RELEASE.get("server_pub
 PINNED_CA       = os.path.join(BASE_DIR, "pinned_roots.pem")
 
 # ── Signed updates (#36): a manifest signed with the release key, checked daily (release builds only) ──
-AGENT_VERSION   = "0.2.0"
+AGENT_VERSION   = "0.2.1"
 UPDATE_URL      = os.environ.get("EDR_UPDATE_URL") or RELEASE.get("update_url", "")
 UPDATE_PUBKEY   = os.environ.get("EDR_UPDATE_PUBKEY") or RELEASE.get("update_pubkey", "")
 UPDATE_EVERY_S  = 24 * 3600
@@ -136,6 +136,20 @@ IPC_DIR        = os.environ.get("EDR_IPC_DIR", os.path.join(os.environ.get("Prog
 ALERTS_DIR     = os.path.join(IPC_DIR, "alerts")
 DECISIONS_DIR  = os.path.join(IPC_DIR, "decisions")
 REPORTS_OUTBOX = os.path.join(IPC_DIR, "reports_outbox.jsonl")   # uploaded once /v1/report exists (step 5)
+
+
+def read_secret(path):
+    """A one-line secret file, stripped; "" if it is missing or unreadable."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+# (#35) The installer writes the licence here, readable by SYSTEM and Administrators only
+# (the service's registry Environment is readable by every local user).
+LICENCE_KEY = LICENCE_KEY or read_secret(os.path.join(IPC_DIR, "licence.key"))
 
 # ── Trust cache (#18) ──
 TRUST_CACHE_CAPACITY = 1000

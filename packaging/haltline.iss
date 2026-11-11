@@ -65,23 +65,30 @@ begin
   Result := Run(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), '-NoProfile -ExecutionPolicy Bypass ' + Params);
 end;
 
-{ The licence key already in the service's Environment, so upgrades (including silent ones) keep it. }
+{ The licence key from an earlier install, so upgrades (including silent ones) keep it: the protected
+  file first, then the registry Environment that versions up to 0.2.0 used. }
 function ExistingLicence(): String;
 var
-  S: String;
+  S: AnsiString;
+  E: String;
   P: Integer;
 begin
   Result := '';
-  if RegQueryMultiStringValue(HKLM, SvcKey, 'Environment', S) then
+  if LoadStringFromFile(ExpandConstant('{commonappdata}\Telltale\licence.key'), S) and (Trim(String(S)) <> '') then
   begin
-    P := Pos('EDR_LICENCE_KEY=', S);
+    Result := Trim(String(S));
+    Exit;
+  end;
+  if RegQueryMultiStringValue(HKLM, SvcKey, 'Environment', E) then
+  begin
+    P := Pos('EDR_LICENCE_KEY=', E);
     if P > 0 then
     begin
-      S := Copy(S, P + Length('EDR_LICENCE_KEY='), Length(S));
-      P := Pos(#0, S);
+      E := Copy(E, P + Length('EDR_LICENCE_KEY='), Length(E));
+      P := Pos(#0, E);
       if P > 0 then
-        S := Copy(S, 1, P - 1);
-      Result := S;
+        E := Copy(E, 1, P - 1);
+      Result := E;
     end;
   end;
 end;
@@ -126,8 +133,12 @@ begin
     SC('create ' + Svc + ' binPath= "\"' + ExpandConstant('{app}\haltline-agent.exe') + '\"" start= auto DisplayName= "Haltline Agent"');
   SC('description ' + Svc + ' "Behavioral ransomware detection: asks before stopping a threat."');
   SC('failure ' + Svc + ' reset= 86400 actions= restart/60000/restart/60000/restart/60000');
-  RegWriteMultiStringValue(HKLM, SvcKey, 'Environment', 'EDR_MODE=ask' + #0 + 'EDR_LICENCE_KEY=' + Licence);
+  { The registry Environment is readable by every local user, so the licence goes to a file instead. }
+  RegWriteMultiStringValue(HKLM, SvcKey, 'Environment', 'EDR_MODE=ask');
+  { -Packaged creates C:\ProgramData\Telltale readable by SYSTEM and Administrators only; the key inherits that. }
   PS('-File "' + ExpandConstant('{app}\install_windows.ps1') + '" -Packaged');
+  if not SaveStringToFile(ExpandConstant('{commonappdata}\Telltale\licence.key'), Licence, False) then
+    MsgBox('Could not save the licence key; Haltline will run without cloud checks.', mbError, MB_OK);
   SC('start ' + Svc);
 end;
 
@@ -139,4 +150,5 @@ begin
   SC('delete ' + Svc);
   Run(ExpandConstant('{sys}\taskkill.exe'), '/IM haltline-helper.exe /F');
   PS('-File "' + ExpandConstant('{app}\install_windows.ps1') + '" -Uninstall');
+  DeleteFile(ExpandConstant('{commonappdata}\Telltale\licence.key'));
 end;

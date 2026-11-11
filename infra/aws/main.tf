@@ -547,7 +547,7 @@ resource "aws_cognito_user_pool_client" "console" {
   callback_urls                        = ["https://${var.admin_hostname}/"]
   logout_urls                          = ["https://${var.admin_hostname}/"]
   explicit_auth_flows                  = ["ALLOW_USER_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
-  read_attributes                      = ["email"]
+  read_attributes                      = ["email", "email_verified"] # the email scope puts both in the ID token; without email_verified Cognito refuses tokens (invalid_grant)
   prevent_user_existence_errors        = "ENABLED"
   enable_token_revocation              = true
   id_token_validity                    = 15

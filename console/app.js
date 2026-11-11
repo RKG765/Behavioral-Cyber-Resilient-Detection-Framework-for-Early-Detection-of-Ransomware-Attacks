@@ -27,23 +27,46 @@ async function login(reauth = false) {
   location.assign(`${CFG.cognitoDomain}/oauth2/authorize?${q}`);
 }
 
+let loginError = ""; // why the last sign-in didn't stick, shown on the Sign in card
+
 async function finishLogin() {
   const q = new URLSearchParams(location.search);
+  if (q.has("error")) loginError = `The sign-in page reported: ${q.get("error_description") || q.get("error")}`;
   if (!q.has("code")) return;
   const saved = JSON.parse(sessionStorage.getItem("pkce") ?? "null");
   sessionStorage.removeItem("pkce");
   history.replaceState(null, "", `/${saved?.back ?? ""}`);
-  if (!saved || saved.state !== q.get("state")) return;
-  const res = await fetch(`${CFG.cognitoDomain}/oauth2/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code", client_id: CFG.clientId, code: q.get("code"),
-      redirect_uri: redirectUri(), code_verifier: saved.verifier,
-    }),
-  });
-  if (res.ok) idToken = (await res.json()).id_token;
+  if (!saved || saved.state !== q.get("state")) {
+    loginError = "That sign-in came back to a different tab or expired. Sign in again from this tab.";
+    return;
+  }
+  try {
+    const res = await fetch(`${CFG.cognitoDomain}/oauth2/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code", client_id: CFG.clientId, code: q.get("code"),
+        redirect_uri: redirectUri(), code_verifier: saved.verifier,
+      }),
+    });
+    if (res.ok) idToken = (await res.json()).id_token;
+    else {
+      const e = await res.json().catch(() => ({}));
+      loginError = e.error === "invalid_grant"
+        ? "The sign-in didn't finish (usually the authenticator step). Choose Start over, sign in again, and enter the 6-digit code from your authenticator app."
+        : `The sign-in service refused the code (HTTP ${res.status}${e.error ? `: ${e.error}` : ""}). Sign in again.`;
+    }
+  } catch (e) {
+    loginError = `Couldn't reach the sign-in service (${e.message}).`;
+  }
 }
+
+// The Lambda's 401 reasons (tier2_scorer/src/admin.rs) in words.
+const WHY = {
+  access: "Cloudflare Access didn't vouch for this request. Reload the page and sign in to Cloudflare again.",
+  login: "Your AWS login wasn't accepted (expired or not valid here). Sign in again.",
+  "identity mismatch": "You signed in to Cloudflare and to AWS with different emails. Use the same email for both: sign out of the AWS login (Sign out), and if needed open the page in a private window.",
+};
 
 function logout() {
   idToken = null;
@@ -67,8 +90,12 @@ async function api(path, method = "GET") {
   if (res.status === 401 && body.error === "step_up") throw new StepUp("needs a fresh sign-in");
   if (res.status === 401) {
     idToken = null;
+    loginError = WHY[body.error] ?? `Signed out (${body.error ?? `HTTP ${res.status}`}).`;
     showLogin();
     throw new Error("signed out");
+  }
+  if (res.status === 403 && body.error === "forbidden" && path === "overview") {
+    loginError = "Signed in, but your account has no role here yet. Ask an admin to add you on the Admins page.";
   }
   if (res.status === 502 && body.edge_updated === false) throw new Error("saved, but the edge did not update. Try again.");
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -644,8 +671,11 @@ function showLogin() {
   $("who").textContent = "";
   $("view").replaceChildren(el("div", { class: "signin" },
     el("h1", {}, "Sign in"),
-    el("p", {}, "Use your passkey or authenticator app. You are signed out after 15 minutes without activity."),
-    el("button", { class: "btn primary", type: "button", onclick: () => login() }, "Sign in")));
+    el("p", {}, "Use your authenticator app. You are signed out after 15 minutes without activity."),
+    loginError ? el("p", { class: "signin-error", role: "alert" }, loginError) : null,
+    el("button", { class: "btn primary", type: "button", onclick: () => login() }, "Sign in"),
+    // A half-finished AWS sign-in (e.g. the authenticator step not completed) keeps bouncing back; this clears it.
+    loginError ? el("button", { class: "btn", type: "button", onclick: () => logout() }, "Start over") : null));
 }
 
 const skeleton = () => el("div", { class: "skel", "aria-busy": "true", "aria-label": "Loading" }, Array.from({ length: 7 }, () => el("i")));
