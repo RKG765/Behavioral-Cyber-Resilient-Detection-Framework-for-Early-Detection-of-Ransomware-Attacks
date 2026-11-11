@@ -179,7 +179,9 @@ below has run on real accounts.
   restore, block and unblock. Each action shows up in the audit view.
 - [ ] **Revoke / restore:** the device's KV entry changes, and the Worker refuses (or accepts) it
   within KV's propagation time.
-- [ ] **IP block:** the IP is added to `telltale_blocked` with the `CF_LISTS_TOKEN` and gets 403 at
+- [ ] **IP block:** blocking an IP in the console writes it to KV `blocked_ips`, and the Worker refuses it
+  (403) within a minute. (Changed 2026-11-12: workers.dev has no zone, so the Cloudflare IP List would
+  block nothing; the old check follows for when a domain exists.) Previously: the IP is added to `telltale_blocked` with the `CF_LISTS_TOKEN` and gets 403 at
   Cloudflare. The AWS fallback still uses the `blocked_ips` Terraform variable.
 - [ ] **Edge filter:** in the real CloudFront runtime, `/v1/report`, `/internal/log` and `/admin/*`
   pass only with the origin secret (and the body hash on POST).
@@ -276,3 +278,22 @@ starting and the helper exe running. Not yet run on a clean PC:
   retention and deletion promises match how you'll operate, and add a contact address.
 - [ ] **Beta group:** recruit testers, give each a licence key, collect feedback on alerts and false
   positives.
+
+## Dashboard go-live (2026-11-12)
+
+- [x] **Access app** "Haltline SOC console" on `haltline-console.pages.dev` and
+  `*.haltline-console.pages.dev`, email list `haltline_admins` (2 emails), one-time PIN, 8 h.
+  *PASS: the site answers 302 to `foreducation.cloudflareaccess.com` before anything loads.*
+- [x] **Dashboard deployed** to Pages with `AWS_API_URL` and `ORIGIN_SECRET`; real Cognito values in
+  `console/config.js`.
+- [x] **Lambda** redeployed (Create licence, Admins, KV IP blocking) with `ACCESS_AUD`; **Worker**
+  redeployed (block list). Live attack tests afterwards: 24/25 (below).
+- [x] **Cognito admins** rkg270954@gmail.com and rajkumargupta7632@gmail.com created in `admin`
+  (FORCE_CHANGE_PASSWORD, invite emails sent).
+- [ ] **First sign-in end to end:** Access code → Cognito temporary password → new password →
+  authenticator → dashboard pages load through the Pages Function → Create licence → Add admin.
+- [ ] **Per-device rate limit across isolates:** FAILS. 70 requests over 8 parallel connections all
+  got 200 in 1 s; over one keep-alive connection 17 of 70 got 429. The limit counts per Worker
+  isolate. Needs Cloudflare's rate-limit rule (domain) or a Durable Object counter.
+- [ ] **IP block from the dashboard:** blocked IP gets 403 from the Worker within 60 s; unblock
+  restores it.

@@ -1,5 +1,5 @@
 // Public values only (no secrets). From `terraform output` in infra/aws.
 window.TELLTALE = {
-  cognitoDomain: "https://REPLACE_WITH_PREFIX.auth.REPLACE_WITH_REGION.amazoncognito.com",
-  clientId: "REPLACE_WITH_COGNITO_CLIENT_ID",
+  cognitoDomain: "https://haltline-admin-4769.auth.ap-south-1.amazoncognito.com",
+  clientId: "52tk78fm5igsbigbp3hia6e5na",
 };

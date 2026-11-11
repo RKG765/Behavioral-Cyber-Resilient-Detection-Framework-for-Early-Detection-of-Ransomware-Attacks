@@ -150,13 +150,18 @@ def main():
         check("synthetic out-of-range vectors get a verdict only, nothing more", "leak" not in codes, str(codes))
 
         # ── flood: one device, more than RATE_PER_MIN (60) a minute ──
-        statuses = []
-        for _ in range(70):
+        # In parallel: one at a time can take over a minute and straddle two counting windows.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def one(_):
             raw = body(features())
-            statuses.append(post(worker, "/v1/score", raw, dev.headers("/v1/score", raw)).status_code)
+            return post(worker, "/v1/score", raw, dev.headers("/v1/score", raw)).status_code
+        started = time.time()
+        with ThreadPoolExecutor(8) as pool:
+            statuses = list(pool.map(one, range(70)))
         n429 = statuses.count(429)
         check("flood: the per-device limit (60/min) answers 429", n429 > 0, f"{statuses.count(200)} x 200, {n429} x 429 "
-              "(counted per Worker isolate, so a few more than 60 can pass)")
+              f"in {time.time() - started:.0f} s (counted per Worker isolate, so a few more than 60 can pass)")
 
         # ── origin bypass: AWS directly, skipping Cloudflare ──
         fake = {"content-type": "application/json", "x-tt-origin-secret": "guess", "x-amz-content-sha256": hashlib.sha256(b"{}").hexdigest()}

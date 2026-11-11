@@ -39,7 +39,8 @@ and the Cognito ID token.
    `secrets.tfvars` (git-ignored) holds `region`, `alert_email`, `response_signing_seed`,
    `origin_secret`, `cf_account_id`, `cf_kv_namespace`, `cf_api_token`, `admin_hostname`,
    `cognito_domain_prefix`, `access_team_domain` (`<team>.cloudflareaccess.com`), `access_aud`,
-   `cf_list_id` and `cf_lists_token` (a token with *Account Filter Lists: Edit* only).
+   and optionally `cf_access_list_id` + `cf_zt_token` (a token with *Zero Trust: Edit* only) so the
+   console's Admins page can add emails to the Access list.
    For the Cloud → Cloudflare page also set `cf_zone_id` and `cf_analytics_token` (a token with
    *Account Analytics: Read* and *Zone Analytics: Read* only); without them the page says it isn't
    configured. For the CloudFront panel, apply once more with `cloudfront_distribution_id` set to

@@ -47,8 +47,8 @@ advertising.
 5. YOUR CHOICES
 
   - You can uninstall Haltline at any time (Settings > Apps). It stops sending anything at once.
-  - To have your device record, logs and reports deleted, ask the person or organisation that gave
-    you your licence key, quoting your device ID. The ID is in agent.log in the Haltline install
+  - To have your device record, logs and reports deleted, or for any privacy question, email
+    nobigoda@gmail.com and quote your device ID. The ID is in agent.log in the Haltline install
     folder, on the line "Cloud Tier 2: ... device <ID>". We delete them within 30 days.
 
 6. ON THIS PC

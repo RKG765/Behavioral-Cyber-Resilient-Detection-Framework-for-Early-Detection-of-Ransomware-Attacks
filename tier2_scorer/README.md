@@ -56,8 +56,12 @@ the Cloudflare Access JWT (`cf-access-jwt-assertion`) and the Cognito ID token (
 for the same email. Roles come from Cognito groups: `viewer` reads, `analyst` also reads reports,
 `admin` also revokes/restores devices and blocks/unblocks IPs, and those POSTs need a login in the
 last 5 minutes. Every action is audited. Reads: `overview`, `devices`, `devices/<id>`, `ips`,
-`events`, `reports`, `audit` (those three take `?day=YYYY-MM-DD`), `licences`. Actions:
-`devices/<id>/revoke|restore`, `ips/<ip>/block|unblock`.
+`events`, `reports`, `audit` (those three take `?day=YYYY-MM-DD`), `licences`, `admins` (admin
+role). Actions: `devices/<id>/revoke|restore`; `ips/<ip>/block|unblock` (the block list is a JSON
+array in KV under `blocked_ips`, which the Worker refuses; a Cloudflare IP List would need a zone);
+`licences/new?seats=N` (returns the new key once, stores only its SHA-256); `admins/new?email=&role=`
+(a Cognito login with an emailed temporary password, in the `admin`, `analyst` or `viewer` group,
+plus the Access email list when `CF_ZT_TOKEN` is set).
 
 **Cloud pages** (viewer role, plan 6.3): `metrics/aws?range=1h|6h|24h[&q=<filter pattern>]` and
 `metrics/cloudflare?range=…`. The Lambda reads CloudWatch (`GetMetricStatistics`, one call per
@@ -100,7 +104,7 @@ metric, while `GetMetricStatistics` is inside the free tier's 1M API requests.
    | `DEVICES_TABLE`, `LICENCES_TABLE`, `EVENTS_TABLE`, `INDEX_TABLE` | table names |
    | `RESPONSE_SIGNING_SEED`, `ORIGIN_SECRET` | from steps 1 and 2 |
    | `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE`, `CF_API_TOKEN` | KV publish; the token has *Workers KV Storage: Edit* only |
-   | `CF_LIST_ID`, `CF_LISTS_TOKEN` | the `telltale_blocked` IP list; the token has *Account Filter Lists: Edit* only |
+   | `CF_ACCESS_LIST_ID`, `CF_ZT_TOKEN` | optional: the Zero Trust email list behind Access, and a token with *Zero Trust: Edit* only, so the Admins page can add emails to it |
    | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Zero Trust team domain (`<team>.cloudflareaccess.com`) and the console's Access application audience tag |
    | `COGNITO_ISSUER`, `COGNITO_CLIENT_ID` | `https://cognito-idp.<region>.amazonaws.com/<pool id>` and the console's app client |
    | `DDB_CAPACITY` | `{"<table>": [RCU, WCU]}`: the tables the AWS page charts and their provisioned capacity |

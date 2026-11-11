@@ -1,44 +1,35 @@
 # Next steps (resume here)
 
-State on 2026-11-11. Done: build steps 1-8 (except the beta group), v0.2.0 pre-release on GitHub,
-"Create licence" in the dashboard (Lambda `POST /admin/licences/new?seats=N`, Licences page form,
-tested on the local demo).
+State on 2026-11-12.
 
-## In progress
-1. **Add admin (dashboard).** Admins page: list admins, add an email with a role.
-   Backend: Cognito `AdminCreateUser` (AWS emails an invite) + `AdminAddUserToGroup`, then append
-   the email to the Cloudflare Access email list. Started: `aws-sdk-cognitoidentityprovider` added to
-   `tier2_scorer/Cargo.toml` (uncommitted, no code uses it yet). Still to do: the route, IAM
-   (`cognito-idp:AdminCreateUser`, `AdminAddUserToGroup`, `ListUsersInGroup` on the pool), the page,
-   and a Cloudflare token (Zero Trust: Edit) as a Lambda env var for the Access list. Without that
-   token, the page tells you to add the email in Zero Trust by hand.
+## Live now
+- **Dashboard:** https://haltline-console.pages.dev, behind Cloudflare Access (Zero Trust team
+  `foreducation`, app "Haltline SOC console", email list `haltline_admins`: rkg270954@gmail.com and
+  rajkumargupta7632@gmail.com, one-time PIN login, 8 h sessions), then the Cognito login (MFA
+  required). Pages secrets `AWS_API_URL` and `ORIGIN_SECRET` are set.
+- **Admins:** both emails are in the Cognito `admin` group (invited: AWS emailed each a temporary
+  password). The **Admins** page adds more (invite + role). Adding them to the Access list happens
+  automatically only once a Cloudflare token with *Zero Trust: Edit* is in `secrets.tfvars` as
+  `cf_zt_token` (then `terraform apply`); until then add the email to `haltline_admins` in Zero Trust
+  by hand.
+- **Licences:** the **Licences** page creates keys (shown once). Guide for testers: `docs/BETA.md`.
+- **IP blocking:** the **IPs** page block button writes KV `blocked_ips`; the Worker refuses those
+  IPs within a minute. The AWS fallback still uses the `blocked_ips` Terraform variable.
+- **Lambda** (with Create licence, Admins, KV blocking) and **Worker** (block list) redeployed;
+  live attack tests pass except the parallel flood check below.
 
-## To host the dashboard (Cloudflare Pages + Access, data stays on AWS)
-2. **Access for `haltline-console.pages.dev`** (Zero Trust team `foreducation.cloudflareaccess.com`):
-   a self-hosted app covering `haltline-console.pages.dev` and `*.haltline-console.pages.dev`, a
-   policy allowing only **rkg270954@gmail.com** and **rajkumargupta7632@gmail.com** (an email list),
-   session 8 h. Note its **AUD tag**. Do **not** protect the Worker `haltline-tier2`: agents call it.
-3. **Lambda:** in `infra/aws/secrets.tfvars` set `access_aud` (from step 2); rebuild the zip
-   (`cargo lambda build --release --arm64 --features lambda --bin lambda --output-format zip`, with
-   zig on PATH) and `terraform -chdir=infra/aws apply -var-file=secrets.tfvars`.
-4. **Dashboard settings:** `console/config.js` → `cognitoDomain:
-   "https://haltline-admin-4769.auth.ap-south-1.amazoncognito.com"`, `clientId:
-   "52tk78fm5igsbigbp3hia6e5na"`.
-5. **Deploy:** `npx wrangler pages secret put AWS_API_URL --project-name haltline-console` (the
-   Lambda URL), same for `ORIGIN_SECRET` (as in secrets.tfvars), then
-   `npx wrangler pages deploy console --project-name haltline-console --branch main`.
-   (Today the site answers 522: the project has never had a deployment.)
-6. **Cognito admins:** `admin-create-user` + `admin-add-user-to-group --group-name admin` for the two
-   emails (pool `ap-south-1_li7V0Qkdl`). Each gets an invite email; first sign-in sets a password and
-   an authenticator app.
-7. **Check end to end:** open the dashboard → Access email code → Cognito sign-in → Licences →
-   Create licence → install the exe with that key on a PC → the device appears in Devices with its IP.
-
-## Still open from earlier
-8. **Install `Haltline-Setup-0.2.0.exe` on this PC** (licence key in `build\licence-this-pc.txt`;
-   the admin prompt was cancelled last time).
-9. **IP blocking from the dashboard:** `cf_list_id` / `CF_LISTS_TOKEN` are still placeholders.
-10. **Beta group:** pick testers, make each a licence (step 7), send the release link.
-11. **Privacy notice:** add a contact address to `PRIVACY.md` before the beta.
-12. **Later:** domain (WAF + rate-limit rules), CloudFront once AWS verifies the account, passkeys
-    once the AWS Terraform provider supports passkey MFA, real code signing.
+## To do
+1. **First sign-in (you):** open the dashboard, enter the Access code from your email, then the
+   temporary password from the AWS email, set a new password (14+ characters) and an authenticator
+   app. Then Licences → Create licence works for real.
+2. **Install the exe on this PC** (licence in `build\licence-this-pc.txt`); check the PC appears
+   under Devices with its IP.
+3. **Release asset:** `build\Haltline-Setup-0.2.0.exe` was rebuilt with the privacy contact; the
+   GitHub v0.2.0 asset is the older build until it is re-uploaded.
+4. **Per-device rate limit is per Worker isolate:** 70 requests over 8 parallel connections all got
+   200 in 1 s (one connection gets 429 after ~53). Fix: Cloudflare's rate-limit rule (needs the
+   domain) or a Durable Object counter per device.
+5. **Beta:** pick testers and follow `docs/BETA.md`.
+6. **Later (outside our control or needs money):** domain (WAF + rate-limit rules), CloudFront once
+   AWS verifies the account, passkeys once the AWS Terraform provider supports passkey MFA
+   (hashicorp/terraform-provider-aws#50110), real code signing (SignPath or a paid certificate).

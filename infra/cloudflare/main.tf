@@ -222,7 +222,7 @@ output "access_aud" {
 }
 
 output "blocked_list_id" {
-  description = "CF_LIST_ID for the admin Lambda (infra/aws cf_list_id)"
+  description = "The zone firewall IP list (needs the domain). The console blocks IPs through KV instead (blocked_ips)"
   value       = cloudflare_list.blocked.id
 }
 
