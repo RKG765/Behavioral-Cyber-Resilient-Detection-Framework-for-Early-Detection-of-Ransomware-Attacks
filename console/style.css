@@ -327,3 +327,7 @@ dialog p { margin: 0 0 12px; color: var(--ink-2); }
   h1 { font-size: 1.625rem; }
   .band-count { font-size: 2rem; }
 }
+
+/* Row actions on Licences and Admins: inline edit + buttons */
+.row-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.row-actions .seats { width: 4.5em; }

@@ -244,7 +244,7 @@ resource "aws_iam_role_policy" "tables" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"] # Scan: console lists
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"] # Scan: console lists; DeleteItem: delete a licence
         Resource = [aws_dynamodb_table.devices.arn, aws_dynamodb_table.licences.arn]
       },
       {
@@ -269,14 +269,14 @@ resource "aws_iam_role_policy" "observability" {
   })
 }
 
-# The console's Admins page: invite an admin and put them in a role group (this pool only).
+# The console's Admins page: invite, change role, remove (this pool only).
 resource "aws_iam_role_policy" "admins" {
   role = aws_iam_role.api.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
-      Action   = ["cognito-idp:AdminCreateUser", "cognito-idp:AdminAddUserToGroup", "cognito-idp:ListUsersInGroup"]
+      Action   = ["cognito-idp:AdminCreateUser", "cognito-idp:AdminAddUserToGroup", "cognito-idp:ListUsersInGroup", "cognito-idp:AdminRemoveUserFromGroup", "cognito-idp:AdminDeleteUser"]
       Resource = aws_cognito_user_pool.admin.arn
     }]
   })

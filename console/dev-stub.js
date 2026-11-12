@@ -53,7 +53,7 @@ const reports = [
 ].map((r, i) => ({ ...r, ts: T - 3600 * (5 - i), device: devices[i * 2].device_id, sha256: hex(64), ip: devices[i * 2].last_ip }));
 
 const licences = [[25, 11], [10, 10], [5, 2], [100, 37]].map(([seats, used]) => ({ licence_hash: hex(64), seats, used }));
-const admins = [{ email: "admin@example.com", role: "admin", status: "CONFIRMED", enabled: true }];
+const admins = [{ email: "admin@example.com", role: "admin", status: "CONFIRMED", enabled: true }, { email: "analyst@example.com", role: "analyst", status: "FORCE_CHANGE_PASSWORD", enabled: true }];
 const audit = [
   { ts: T - 7200, admin: "priya@example.com", action: "revoke", target: devices[12].device_id },
   { ts: T - 6900, admin: "priya@example.com", action: "block", target: "192.0.2.199" },
@@ -173,6 +173,18 @@ function route(method, path, params) {
     licences.push({ licence_hash: hex(64), seats, used: 0 });
     audit.push({ ts: now(), admin: "analyst@example.com", action: "licence", target: hex(16) });
     return [200, { key, licence_hash: hex(64), seats }];
+  }
+  if (method === "POST" && a === "licences") {
+    const i = licences.findIndex((x) => x.licence_hash === b);
+    if (c === "seats") licences[i].seats = Number(params.get("seats"));
+    if (c === "delete") licences.splice(i, 1);
+    return [200, { ok: true }];
+  }
+  if (method === "POST" && a === "admins") {
+    const i = admins.findIndex((x) => x.email === params.get("email"));
+    if (b === "role") admins[i].role = params.get("role");
+    if (b === "remove") admins.splice(i, 1);
+    return [200, { ok: true }];
   }
   if (method === "POST") {
     const d = devices.find((x) => x.device_id === b);

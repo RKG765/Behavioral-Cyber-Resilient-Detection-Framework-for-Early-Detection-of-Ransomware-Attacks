@@ -105,8 +105,12 @@ def main():
         check("register through the Worker (signed reply)", r.status_code == 200 and signed_ok(r, h["x-tt-nonce"]), f"HTTP {r.status_code}")
         other = Device()
         raw2 = body({"licence_key": licence, "key_kind": "software", "public_key": base64.b64encode(other.pub).decode()})
-        r = post(worker, "/v1/register", raw2, other.headers("/v1/register", raw2))
-        check("a second device on a 1-seat licence is refused", r.status_code == 403, f"HTTP {r.status_code}")
+        h2 = other.headers("/v1/register", raw2)
+        r = post(worker, "/v1/register", raw2, h2)
+        # Refused with a signed {"licence": "full"} (the agent stops on it), not a plain 403.
+        check("a second device on a 1-seat licence is refused (signed licence=full)",
+              r.status_code == 200 and signed_ok(r, h2["x-tt-nonce"]) and r.json().get("licence") == "full",
+              f"HTTP {r.status_code} {r.text[:80]}")
         time.sleep(2)
 
         # ── a normal score, on both paths ──
@@ -190,14 +194,18 @@ def main():
         kv = {"pk": base64.b64encode(dev.pub).decode(), "status": "revoked", "kind": "software"}
         subprocess.run(["npx", "--yes", "wrangler", "kv", "key", "put", "--remote", "--namespace-id", a.kv_namespace,
                         dev.id, json.dumps(kv)], capture_output=True, encoding="utf-8", errors="replace", shell=True, check=True)
-        started, code = time.time(), None
+        # The Worker answers a revoked device with a signed {"licence": "revoked"} (the agent stops on it).
+        started, ok, code = time.time(), False, None
         while time.time() - started < 90:
             raw = body(features())
-            code = requests.post(worker + "/v1/score", data=raw, headers=dev.headers("/v1/score", raw), timeout=15).status_code
-            if code == 403:
+            h = dev.headers("/v1/score", raw)
+            r = requests.post(worker + "/v1/score", data=raw, headers=h, timeout=15)
+            code = r.status_code
+            ok = code == 200 and signed_ok(r, h["x-tt-nonce"]) and r.json().get("licence") == "revoked"
+            if ok:
                 break
             time.sleep(10)
-        check("revoked device via Worker: 403 within KV propagation (90 s)", code == 403,
+        check("revoked device via Worker: signed licence=revoked within KV propagation (90 s)", ok,
               f"HTTP {code} after {time.time() - started:.0f} s")
     finally:
         cleanup(a, T, dev, licence_hash)

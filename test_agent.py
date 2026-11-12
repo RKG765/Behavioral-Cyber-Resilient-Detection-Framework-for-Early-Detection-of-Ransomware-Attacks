@@ -823,6 +823,63 @@ def t37_licence_comes_from_a_protected_file():
     os.remove(p); os.rmdir(d)
 
 
+@test
+def t38_signed_licence_refusal_stops_agent_unsigned_does_not():
+    """Deleted/revoked licence: only a server-signed, fresh refusal stops protection and tells the user"""
+    import base64, json, shutil, tempfile
+    import telltale_helper as h
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    class FakeKey:   # the fake server below doesn't check device signatures (t30 does)
+        kind = "software"
+        def public_key(self): return b"\x04" + b"\x01" * 64
+        def sign(self, data): return b"\x00" * 64
+    server, forged = ed25519.Ed25519PrivateKey.generate(), ed25519.Ed25519PrivateKey.generate()
+    pub = base64.b64encode(server.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    tmp = tempfile.mkdtemp()
+    old = (agent.requests.post, agent.ALERTS_DIR, h.ALERTS_DIR)
+    agent.ALERTS_DIR = h.ALERTS_DIR = tmp
+    status = os.path.join(tmp, agent.LICENCE_STATUS)
+    try:
+        c = agent.CloudClient(["https://primary"], "LIC", pub, FakeKey())
+        c.registered = True
+        def reply(make):
+            agent.requests.post = lambda url, data, headers, timeout, **kw: make(headers["x-tt-nonce"])
+        signed = lambda key, body: (lambda nonce: _Reply(json.dumps({**body, "nonce": nonce}).encode(),
+                                                         key.sign(json.dumps({**body, "nonce": nonce}).encode())))
+
+        for label, make in (("unsigned 403", lambda n: _Reply(b'{"error":"revoked"}', b"", 403)),
+                            ("forged", signed(forged, {"licence": "revoked"}))):
+            reply(make)
+            try:
+                c.score([0.0] * 99)
+                raise AssertionError(f"{label} reply was accepted")
+            except agent.CloudError as e:
+                assert not isinstance(e, agent.LicenceRevoked), label
+            assert not agent.STOP.is_set() and not os.path.exists(status), f"{label} must not stop the agent"
+
+        reply(signed(server, {"licence": "revoked"}))
+        try:
+            c.score([0.0] * 99)
+            raise AssertionError("signed revocation was ignored")
+        except agent.LicenceRevoked:
+            pass
+        assert agent.STOP.is_set(), "a signed revocation stops protection"
+        reason, ts = h.licence_notice(None)
+        assert reason == "revoked" and h.licence_notice(ts) is None, "the helper shows it once"
+
+        agent.STOP.clear()
+        reply(signed(server, {"device_id": c.device_id}))   # licence restored: a normal registration
+        c.register()
+        assert not os.path.exists(status), "a valid registration clears the notice"
+    finally:
+        agent.requests.post, agent.ALERTS_DIR, h.ALERTS_DIR = old
+        agent.STOP.clear()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ───────────────────────── summary ─────────────────────────
 for p in SPAWNED:
     try: p.kill()

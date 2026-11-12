@@ -18,10 +18,15 @@ async function score(request, env, log) {
   const device = request.headers.get("x-tt-device") ?? "";
   const record = /^[0-9a-f]{32}$/.test(device) ? await env.DEVICES.get(device, { type: "json", cacheTtl: 60 }) : null;
   if (!record) return log.reject(json({ error: "unauthorized" }, 401), "unknown device");
-  if (record.status !== "active") return log.reject(json({ error: "revoked" }, 403), "revoked");
 
   const auth = await verifyRequest(request.headers, "POST", "/v1/score", body, unb64(record.pk), Date.now() / 1000, env.DEVICE_LIMIT);
   if (auth.error) return log.reject(json({ error: auth.error }, auth.status), auth.error);
+  if (record.status !== "active") {
+    // Signed, and only after the device's own signature checked out: the agent stops protecting on
+    // this, so a fake or replayed "revoked" must not be possible.
+    log.reject(json({ error: "revoked" }, 403), "revoked");
+    return signedJson({ licence: "revoked", nonce: auth.nonce }, env.RESPONSE_SIGNING_SEED);
+  }
 
   let features;
   try {

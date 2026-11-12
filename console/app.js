@@ -14,7 +14,7 @@ const $ = (id) => document.getElementById(id);
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const redirectUri = () => `${location.origin}/`;
 
-async function login(reauth = false) {
+async function login(reauth = false, silent = false) {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
@@ -24,6 +24,8 @@ async function login(reauth = false) {
     code_challenge_method: "S256", code_challenge: challenge, state,
   });
   if (reauth) q.set("prompt", "login"); // step-up: a fresh passkey / TOTP check
+  else if (silent) q.set("prompt", "none"); // still signed in to AWS: straight back, no "Sign in as" page
+  sessionStorage.setItem("silent", silent ? "1" : "");
   location.assign(`${CFG.cognitoDomain}/oauth2/authorize?${q}`);
 }
 
@@ -31,8 +33,21 @@ let loginError = ""; // why the last sign-in didn't stick, shown on the Sign in 
 
 async function finishLogin() {
   const q = new URLSearchParams(location.search);
+  const wasSilent = sessionStorage.getItem("silent") === "1";
+  sessionStorage.removeItem("silent");
+  // The silent try found no AWS session: go to the password + authenticator page, no extra click.
+  if (wasSilent && q.get("error") === "login_required") {
+    history.replaceState(null, "", "/");
+    return login();
+  }
   if (q.has("error")) loginError = `The sign-in page reported: ${q.get("error_description") || q.get("error")}`;
-  if (!q.has("code")) return;
+  if (!q.has("code")) {
+    // A fresh visit: try the AWS session silently once. Errors, demo mode and Sign out stay on the card.
+    const signedOut = sessionStorage.getItem("signedOut") === "1";
+    sessionStorage.removeItem("signedOut");
+    if (!q.has("error") && !idToken && !signedOut) return login(false, true);
+    return;
+  }
   const saved = JSON.parse(sessionStorage.getItem("pkce") ?? "null");
   sessionStorage.removeItem("pkce");
   history.replaceState(null, "", `/${saved?.back ?? ""}`);
@@ -70,6 +85,7 @@ const WHY = {
 
 function logout() {
   idToken = null;
+  sessionStorage.setItem("signedOut", "1");
   location.assign(`${CFG.cognitoDomain}/logout?${new URLSearchParams({ client_id: CFG.clientId, logout_uri: redirectUri() })}`);
 }
 
@@ -404,6 +420,7 @@ const VIEWS = {
       { key: "seats", label: "Seats", mono: true, num: true },
       { key: "used", label: "Used", mono: true, num: true },
       { key: "left", label: "Left", num: true, value: (r) => r.seats - r.used, render: (r) => (r.used >= r.seats ? el("span", { class: "chip" }, "Full") : r.seats - r.used) },
+      { key: "actions", label: "", value: () => 0, render: licenceActions },
     ], await api("licences"), { sort: "left", empty: "No licences issued yet." }));
     return 0;
   },
@@ -417,6 +434,7 @@ const VIEWS = {
       { key: "email", label: "Email" },
       { key: "role", label: "Role", value: (r) => cap(r.role), render: (r) => cap(r.role) },
       { key: "status", label: "Login", value: (r) => LOGIN[r.status] ?? r.status, render: (r) => LOGIN[r.status] ?? r.status },
+      { key: "actions", label: "", value: () => 0, render: adminActions },
     ], await api("admins"), { sort: "email", empty: "No admins yet." }));
     return 0;
   },
@@ -431,14 +449,41 @@ const VIEWS = {
   cloudflare: (view) => cloudView(view, "cloudflare"),
 };
 
+function licenceActions(r) {
+  const h = r.licence_hash, id = short(h, 16);
+  const seats = el("input", { type: "number", min: String(Math.max(1, r.used)), max: "100", value: String(r.seats), inputmode: "numeric", "aria-label": `Seats for ${id}`, class: "seats" });
+  return el("span", { class: "row-actions" }, seats,
+    el("button", { class: "btn", type: "button", onclick: () => act(`licences/${h}/seats?seats=${Number(seats.value)}`, {
+      title: `Set seats to ${Number(seats.value)}?`, body: "How many PCs this key can register. It can't go below the PCs already using it.", target: id, ok: "Save seats",
+    }) }, "Save"),
+    el("button", { class: "btn danger", type: "button", onclick: () => act(`licences/${h}/delete`, {
+      title: "Delete this licence?", target: id, ok: "Delete licence", danger: true,
+      body: `The key stops working for new installs, and Haltline stops protecting the ${r.used} PC${r.used === 1 ? "" : "s"} using it (at the next cloud check, within 6 hours). This can't be undone; a new key would be needed.`,
+    }) }, "Delete"));
+}
+
+function adminActions(r) {
+  if (r.email === claims().email) return el("span", { class: "quiet" }, "You");
+  const role = el("select", { "aria-label": `Role for ${r.email}` }, ...["admin", "analyst", "viewer"].map((x) => el("option", { value: x, selected: x === r.role }, cap(x))));
+  const q = (rest) => `admins/${rest}?email=${encodeURIComponent(r.email)}`;
+  return el("span", { class: "row-actions" }, role,
+    el("button", { class: "btn", type: "button", onclick: () => act(`${q("role")}&role=${role.value}`, {
+      title: `Make ${r.email} ${cap(role.value)}?`, body: "Takes effect at their next sign-in.", target: r.email, ok: "Change role",
+    }) }, "Save"),
+    el("button", { class: "btn danger", type: "button", onclick: () => act(q("remove"), {
+      title: `Remove ${r.email}?`, target: r.email, ok: "Remove admin", danger: true,
+      body: "Deletes their AWS login (password and authenticator) and takes them off the Access list when that is set up. To come back they need a new invite.",
+    }) }, "Remove"));
+}
+
 function revokeBtn(id) {
   return el("button", { class: "btn danger", type: "button", onclick: () => act(`devices/${encodeURIComponent(id)}/revoke`, {
-    title: "Revoke this device?", body: "Tier 2 refuses it at the edge from now on. The PC keeps its local protection. You can restore it later.", target: id, ok: "Revoke device", danger: true,
+    title: "Revoke this device?", body: "Haltline stops protecting that PC (at its next cloud check, within 6 hours) and tells its user why. You can restore it later; the PC then needs a restart.", target: id, ok: "Revoke device", danger: true,
   }) }, "Revoke");
 }
 function restoreBtn(id) {
   return el("button", { class: "btn", type: "button", onclick: () => act(`devices/${encodeURIComponent(id)}/restore`, {
-    title: "Restore this device?", body: "It can call Tier 2 again with its existing key.", target: id, ok: "Restore device",
+    title: "Restore this device?", body: "It can use its existing key again. Haltline starts protecting again after that PC restarts.", target: id, ok: "Restore device",
   }) }, "Restore");
 }
 
@@ -673,7 +718,8 @@ function showLogin() {
     el("h1", {}, "Sign in"),
     el("p", {}, "Use your authenticator app. You are signed out after 15 minutes without activity."),
     loginError ? el("p", { class: "signin-error", role: "alert" }, loginError) : null,
-    el("button", { class: "btn primary", type: "button", onclick: () => login() }, "Sign in"),
+    el("button", { class: "btn primary", type: "button", onclick: () => login(false, true) }, "Sign in"),
+    el("p", { class: "quiet" }, "New here? An admin adds you on the Admins page; AWS then emails you a temporary password. On first sign-in you set your own password and scan the QR code with your authenticator app."),
     // A half-finished AWS sign-in (e.g. the authenticator step not completed) keeps bouncing back; this clears it.
     loginError ? el("button", { class: "btn", type: "button", onclick: () => logout() }, "Start over") : null));
 }

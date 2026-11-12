@@ -416,6 +416,10 @@ async fn register_route(app: &App, req: &Request) -> Result<Response<Body>, Erro
 
     match device(app, h.device).await? {
         Some(item) if attr(&item, "pk") == r.public_key && attr(&item, "status") == "active" => {} // re-register
+        // Signed (the request signature was checked above): the agent stops protecting on it.
+        Some(item) if attr(&item, "pk") == r.public_key => {
+            return signed(app, json!({ "licence": "revoked", "device_id": h.device, "nonce": h.nonce }));
+        }
         Some(_) => return reply(403, json!({ "error": "revoked" })),
         None => {
             let licence = auth::hex(&Sha256::digest(r.licence_key.as_bytes()));
@@ -431,7 +435,9 @@ async fn register_route(app: &App, req: &Request) -> Result<Response<Body>, Erro
                 .await;
             if let Err(e) = seat {
                 if e.as_service_error().is_some_and(|s| s.is_conditional_check_failed_exception()) {
-                    return reply(403, json!({ "error": "licence invalid or full" }));
+                    let exists = app.db.get_item().table_name(&app.licences).key("licence_hash", s(licence)).send().await?.item.is_some();
+                    let why = if exists { "full" } else { "invalid" }; // invalid includes a deleted licence
+                    return signed(app, json!({ "licence": why, "device_id": h.device, "nonce": h.nonce }));
                 }
                 return Err(e.into());
             }
@@ -616,6 +622,53 @@ async fn create_licence(app: &App, admin_email: &str, seats: &str) -> Result<Res
     reply(200, json!({ "key": key, "licence_hash": hash, "seats": seats }))
 }
 
+fn is_hash(h: &str) -> bool {
+    h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Admin action: change how many PCs a licence allows (never below the seats already used).
+async fn set_seats(app: &App, admin_email: &str, hash: &str, seats: &str) -> Result<Response<Body>, Error> {
+    let Some(seats) = seats.parse::<u32>().ok().filter(|n| (1..=100).contains(n)) else {
+        return reply(400, json!({ "error": "seats must be 1 to 100" }));
+    };
+    let r = app
+        .db
+        .update_item()
+        .table_name(&app.licences)
+        .key("licence_hash", s(hash))
+        .update_expression("SET seats = :s")
+        .condition_expression("attribute_exists(licence_hash) AND used <= :s")
+        .expression_attribute_values(":s", n(seats))
+        .send()
+        .await;
+    if let Err(e) = r {
+        if e.as_service_error().is_some_and(|s| s.is_conditional_check_failed_exception()) {
+            return reply(409, json!({ "error": "no such licence, or more PCs already use it than that" }));
+        }
+        return Err(e.into());
+    }
+    audit(app, admin_email, &format!("licence.seats.{seats}"), &hash[..16]).await?;
+    reply(200, json!({ "licence_hash": hash, "seats": seats }))
+}
+
+/// Admin action: delete a licence. Every PC registered with it is revoked at the edge first, so
+/// Tier 2 refuses them, and the key can't register new PCs.
+async fn delete_licence(app: &App, admin_email: &str, hash: &str) -> Result<Response<Body>, Error> {
+    let mut revoked = 0;
+    for d in scan(app, &app.devices, None).await? {
+        if attr(&d, "licence_hash") == hash && attr(&d, "status") == "active" {
+            if set_status(app, admin_email, attr(&d, "device_id"), "revoke").await?.status() != 200 {
+                // Keep the licence so the delete can be retried; the PCs already revoked stay revoked.
+                return reply(502, json!({ "error": "a device could not be revoked at the edge; try again", "edge_updated": false }));
+            }
+            revoked += 1;
+        }
+    }
+    app.db.delete_item().table_name(&app.licences).key("licence_hash", s(hash)).send().await?;
+    audit(app, admin_email, "licence.delete", &hash[..16]).await?;
+    reply(200, json!({ "licence_hash": hash, "devices_revoked": revoked }))
+}
+
 /// Blocked IPs are a JSON array in KV under "blocked_ips"; the Worker refuses them (worker/src/auth.js).
 /// A Cloudflare IP List would need a zone firewall, which workers.dev doesn't have.
 async fn block_ip(app: &App, admin_email: &str, ip: &str, action: &str) -> Result<Response<Body>, Error> {
@@ -707,6 +760,43 @@ async fn add_admin(app: &App, admin_email: &str, email: &str, role: &str) -> Res
     reply(200, json!({ "email": email, "role": role, "invited": invited, "access_updated": access }))
 }
 
+/// Admin action: move an admin to one role (out of the others). Not your own: no locking yourself out.
+async fn set_role(app: &App, admin_email: &str, email: &str, role: &str) -> Result<Response<Body>, Error> {
+    let email = email.trim().to_lowercase();
+    if !ROLES.contains(&role) {
+        return reply(400, json!({ "error": "role must be admin, analyst or viewer" }));
+    }
+    if email == admin_email.to_lowercase() {
+        return reply(400, json!({ "error": "you can't change your own role; ask another admin" }));
+    }
+    app.idp.admin_add_user_to_group().user_pool_id(&app.pool_id).username(&email).group_name(role).send().await?;
+    for other in ROLES.iter().filter(|r| **r != role) {
+        app.idp.admin_remove_user_from_group().user_pool_id(&app.pool_id).username(&email).group_name(*other).send().await?;
+    }
+    audit(app, admin_email, &format!("admin.role.{role}"), &email).await?;
+    reply(200, json!({ "email": email, "role": role }))
+}
+
+/// Admin action: delete an admin's login and take them off the Access list (when that's configured).
+async fn remove_admin(app: &App, admin_email: &str, email: &str) -> Result<Response<Body>, Error> {
+    let email = email.trim().to_lowercase();
+    if email == admin_email.to_lowercase() {
+        return reply(400, json!({ "error": "you can't remove yourself; ask another admin" }));
+    }
+    let r = app.idp.admin_delete_user().user_pool_id(&app.pool_id).username(&email).send().await;
+    if let Err(e) = r {
+        if !e.as_service_error().is_some_and(|s| s.is_user_not_found_exception()) {
+            return Err(e.into());
+        }
+    }
+    let access = !app.access_list_url.is_empty() && !app.zt_token.is_empty() && {
+        let r = app.http.patch(&app.access_list_url).bearer_auth(&app.zt_token).json(&json!({ "remove": [email] })).send().await;
+        r.is_ok_and(|r| r.status().is_success())
+    };
+    audit(app, admin_email, "admin.remove", &email).await?;
+    reply(200, json!({ "email": email, "removed": true, "access_updated": access }))
+}
+
 /// The Cloud pages: one cached fetch per source and range (plan 6.3).
 async fn metrics(app: &App, which: &str, range: Option<&str>, q: Option<&str>) -> Result<Response<Body>, Error> {
     let Some((label, secs, step)) = cloud::range(range) else {
@@ -796,10 +886,16 @@ async fn admin_route(app: &App, req: &Request) -> Result<Response<Body>, Error> 
         (false, ["audit"]) => list(query(app, &app.events, on_day("a"), 500).await?),
         (false, ["licences"]) => list(scan(app, &app.licences, None).await?),
         (true, ["licences", "new"]) => create_licence(app, &user, params.first("seats").unwrap_or("1")).await,
+        (true, ["licences", h, "seats"]) if is_hash(h) => set_seats(app, &user, h, params.first("seats").unwrap_or("")).await,
+        (true, ["licences", h, "delete"]) if is_hash(h) => delete_licence(app, &user, h).await,
         (false, ["admins"]) => admins(app).await,
         (true, ["admins", "new"]) => {
             add_admin(app, &user, params.first("email").unwrap_or(""), params.first("role").unwrap_or("viewer")).await
         }
+        (true, ["admins", "role"]) => {
+            set_role(app, &user, params.first("email").unwrap_or(""), params.first("role").unwrap_or("")).await
+        }
+        (true, ["admins", "remove"]) => remove_admin(app, &user, params.first("email").unwrap_or("")).await,
         (false, ["metrics", which @ ("aws" | "cloudflare")]) => metrics(app, which, params.first("range"), params.first("q")).await,
         (true, ["devices", id, action @ ("revoke" | "restore")]) => set_status(app, &user, id, action).await,
         (true, ["ips", ip, action @ ("block" | "unblock")]) => block_ip(app, &user, ip, action).await,

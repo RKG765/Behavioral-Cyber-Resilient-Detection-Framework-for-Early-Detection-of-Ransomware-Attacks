@@ -842,6 +842,26 @@ class CloudUnavailable(requests.exceptions.ConnectionError):
     """No endpoint answered -- handled like an offline cloud (grey-zone timeout policy)."""
 
 
+class LicenceRevoked(CloudError):
+    """The server signed it: this PC has no valid licence (revoked, deleted/invalid key, or no seat left)."""
+
+
+LICENCE_REFUSALS = {"revoked", "invalid", "full"}
+LICENCE_CHECK_S = 6 * 3600   # re-check even when nothing is escalated, so a deleted licence is noticed
+LICENCE_STATUS = "licence.status"   # in ALERTS_DIR (the user's helper can read it); not .json, so not an alert
+
+
+def licence_lost(reason):
+    """Stop protecting entirely: main()'s loop ends on STOP and the service stops cleanly, so Windows
+    doesn't restart it. Only called for a server-signed refusal, so a faked or blocked reply can't do it."""
+    logger.critical(f"[LICENCE] server says licence {reason} -- Haltline stops protecting this PC")
+    try:
+        _write_json(ALERTS_DIR, LICENCE_STATUS, {"reason": reason, "ts": time.time()})
+    except OSError as e:
+        logger.error(f"[LICENCE] could not tell the user ({e})")
+    STOP.set()
+
+
 class CloudClient:
     """
     Every request is signed with the device key (edr_sensor.DeviceKey: TPM when available).
@@ -870,6 +890,10 @@ class CloudClient:
         if data.get("device_id") != self.device_id:
             raise CloudError("register reply is for a different device")
         self.registered = True
+        try:
+            os.remove(os.path.join(ALERTS_DIR, LICENCE_STATUS))   # licence valid again (e.g. restored)
+        except OSError:
+            pass
         logger.info(f"[CLOUD] device {self.device_id} registered ({self.key.kind} key)")
 
     def score(self, features):
@@ -919,6 +943,9 @@ class CloudClient:
             data = r.json()
             if data.get("nonce") != nonce:
                 raise CloudError(f"{path}: reply does not match this request")
+            if data.get("licence") in LICENCE_REFUSALS:   # signed and fresh: the licence really is gone
+                licence_lost(data["licence"])
+                raise LicenceRevoked(f"licence {data['licence']}")
             return data
         raise CloudUnavailable(f"no Tier-2 endpoint answered ({last})")
 
@@ -1891,6 +1918,14 @@ def main():
             cloud_client.register()
         except Exception as e:
             logger.warning(f"[CLOUD] registration failed ({e}) -- will retry on first escalation")
+
+        def licence_watch():
+            while not STOP.wait(LICENCE_CHECK_S):
+                try:
+                    cloud_client.register()   # idempotent; a signed refusal stops the agent
+                except Exception as e:
+                    logger.warning(f"[LICENCE] check failed ({e}) -- next try in {LICENCE_CHECK_S // 3600} h")
+        threading.Thread(target=licence_watch, name="Licence", daemon=True).start()
 
     # ── Start Grey Zone Monitor (#6, #11) ───────────────────
     gz_monitor = GreyZoneMonitor()

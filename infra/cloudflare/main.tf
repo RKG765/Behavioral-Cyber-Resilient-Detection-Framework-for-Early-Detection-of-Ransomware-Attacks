@@ -187,7 +187,7 @@ resource "cloudflare_zero_trust_access_application" "console" {
   account_id       = var.account_id
   name             = "Haltline SOC console"
   type             = "self_hosted"
-  session_duration = "8h"
+  session_duration = "24h" # one email code a day; AWS password + authenticator still guard the data
   destinations = [
     { type = "public", uri = var.admin_hostname },
     { type = "public", uri = cloudflare_pages_project.console.subdomain },

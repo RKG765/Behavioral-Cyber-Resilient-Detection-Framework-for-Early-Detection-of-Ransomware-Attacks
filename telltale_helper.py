@@ -87,9 +87,44 @@ def show(alert):
     root.mainloop()
 
 
+LICENCE_TEXT = {
+    "revoked": "this PC's licence was removed by your administrator",
+    "invalid": "the licence key is not valid (it may have been deleted)",
+    "full": "the licence key has no free PCs left",
+}
+
+
+def licence_notice(last_ts):
+    """The agent's note that it stopped for a licence reason; (reason, ts) when it is new, else None."""
+    try:
+        with open(os.path.join(ALERTS_DIR, "licence.status"), encoding="utf-8") as f:
+            note = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return (note.get("reason", ""), note.get("ts")) if note.get("ts") != last_ts else None
+
+
+def show_licence(reason):
+    root = tk.Tk()
+    root.title("Haltline has stopped")
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+    why = LICENCE_TEXT.get(reason, "the licence is no longer valid")
+    tk.Label(root, text="Haltline is no longer protecting this PC", font=("Segoe UI", 13, "bold")).pack(padx=16, pady=(14, 4), anchor="w")
+    tk.Label(root, text=f"It stopped because {why}.\nAsk your administrator for a valid key, then reinstall Haltline.",
+             justify="left").pack(padx=16, pady=4, anchor="w")
+    tk.Button(root, text="OK", width=10, command=root.destroy).pack(padx=16, pady=(8, 14), anchor="e")
+    root.mainloop()
+
+
 def main():
     shown = {}
+    licence_ts = None
     while True:
+        note = licence_notice(licence_ts)
+        if note:
+            licence_ts = note[1]
+            show_licence(note[0])
         for alert in due_alerts(shown, time.time()):
             shown[alert["id"]] = time.time()
             show(alert)   # one dialog at a time; the others queue
