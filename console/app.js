@@ -657,7 +657,8 @@ async function cloudView(view, kind) {
     const q = c.logs ? `&q=${encodeURIComponent(logPattern)}` : "";
     const d = await api(`metrics/${kind}?range=${cloudRange}${q}`);
     stamp.textContent = `Updated ${when(d.generated)}`;
-    chartBox.replaceChildren(el("h2", { id: "h-rpm" }, d.rpm.label), rpmChart(d));
+    // No rpm without a Cloudflare zone (workers.dev only): show why instead of an empty chart.
+    chartBox.replaceChildren(...(d.rpm ? [el("h2", { id: "h-rpm" }, d.rpm.label), rpmChart(d)] : [el("p", { class: "quiet" }, d.note ?? "")]));
     quotaBox.replaceChildren(el("h2", { id: "h-quota" }, "Free quota"), quotaBoard(d.quotas));
     panelBox.replaceChildren(...d.panels.map((p) => el("section", {}, el("h2", {}, p.title), figures(p.series))));
     // Tables are built once and updated in place, so a refresh keeps their filters and focus.

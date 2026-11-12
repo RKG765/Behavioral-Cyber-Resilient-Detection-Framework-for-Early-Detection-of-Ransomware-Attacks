@@ -812,8 +812,8 @@ async fn metrics(app: &App, which: &str, range: Option<&str>, q: Option<&str>) -
             let a = cloud::Aws { cw: &o.cw, cw_us_east_1: &o.cw_us_east_1, function: &o.function, tables: &o.tables, distribution: &o.distribution, queue: &o.queue };
             cached(key, cloud::aws(&a, label, secs, step, t).await)
         }
-        None if o.cf_graphql_token.is_empty() || o.cf_zone.is_empty() => {
-            return reply(503, json!({ "error": "Cloudflare analytics is not configured (CF_ANALYTICS_TOKEN, CF_ZONE_ID)" }));
+        None if o.cf_graphql_token.is_empty() || o.cf_account.is_empty() || o.cf_worker.is_empty() => {
+            return reply(503, json!({ "error": "Cloudflare analytics is not configured (CF_ANALYTICS_TOKEN, CF_ACCOUNT_ID, CF_WORKER_SCRIPT); CF_ZONE_ID is optional" }));
         }
         None => cached(key, cloudflare(app, label, secs, step, t).await),
     };
@@ -839,7 +839,7 @@ async fn metrics(app: &App, which: &str, range: Option<&str>, q: Option<&str>) -
 async fn cloudflare(app: &App, label: &str, secs: i64, step: i64, t: i64) -> Result<Value, String> {
     let o = &app.obs;
     let (t0, n) = cloud::grid(t, secs, step);
-    let body = json!({ "query": cloud::cf_query(step), "variables": cloud::cf_vars(&o.cf_zone, &o.cf_account, &o.cf_worker, t0, t) });
+    let body = json!({ "query": cloud::cf_query(step, !o.cf_zone.is_empty()), "variables": cloud::cf_vars(&o.cf_zone, &o.cf_account, &o.cf_worker, t0, t) });
     let r = app
         .http
         .post("https://api.cloudflare.com/client/v4/graphql")
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn admin_emails_are_checked() {
-        for ok in ["a@b.co", "rkg270954@gmail.com", "first.last+tag@sub.example.org"] {
+        for ok in ["a@b.co", "someone@gmail.com", "first.last+tag@sub.example.org"] {
             assert!(valid_email(ok), "{ok}");
         }
         for bad in ["", "no-at", "@b.co", "a@", "a@b", "a@.b.co", "a@b.co.", "a b@c.co", "a@b@c.co", "a,b@c.co", "a@b.co\n"] {

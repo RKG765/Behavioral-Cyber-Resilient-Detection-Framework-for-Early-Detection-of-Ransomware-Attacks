@@ -77,7 +77,7 @@ Save seats and Delete on a test licence, Admins → change role / Remove on a te
    AWS CLI).
 
 ## Your steps
-10. **rajkumargupta7632@gmail.com** has never signed in: use the AWS invite email (temporary password,
+10. **The second admin** (see the Admins page) has never signed in: use the AWS invite email (temporary password,
     valid 1 day per `temporary_password_validity_days`), or remove and add again from the Admins page.
 11. **Docker Desktop error** (not caused by this project): restart Windows, or delete
     `%LOCALAPPDATA%\Docker\run\dockerInference` with Docker closed, or turn off Docker Model Runner.

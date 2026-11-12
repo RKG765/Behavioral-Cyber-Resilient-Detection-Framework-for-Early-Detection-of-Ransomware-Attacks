@@ -310,7 +310,18 @@ pub async fn logs(cwl: &aws_sdk_cloudwatchlogs::Client, group: &str, pattern: &s
 // ───────────────────────── Cloudflare ─────────────────────────
 
 /// One GraphQL query for the Cloudflare page. The bucket is a fixed dimension name, never user input.
-pub fn cf_query(step: i64) -> String {
+/// `zone` false (no domain yet, workers.dev only): the account's Worker numbers only.
+pub fn cf_query(step: i64, zone: bool) -> String {
+    let q = cf_query_full(step);
+    if zone {
+        return q;
+    }
+    let (head, rest) = q.split_once("  zones(").expect("zones block");
+    let accounts = &rest[rest.find("  accounts(").expect("accounts block")..];
+    head.replace("$zone: String!, ", "") + accounts
+}
+
+fn cf_query_full(step: i64) -> String {
     let bucket = if step >= 300 { "datetimeFiveMinutes" } else { "datetimeMinute" };
     let f = "filter: {datetime_geq: $start, datetime_lt: $end}";
     format!(
@@ -332,10 +343,14 @@ pub fn cf_query(step: i64) -> String {
 
 /// GraphQL variables for `cf_query`.
 pub fn cf_vars(zone: &str, account: &str, script: &str, t0: i64, now: i64) -> Value {
-    json!({
-        "zone": zone, "account": account, "script": script,
+    let mut v = json!({
+        "account": account, "script": script,
         "start": rfc3339(t0), "end": rfc3339(now + 1), "dayStart": rfc3339(now - now.rem_euclid(86_400)),
-    })
+    });
+    if !zone.is_empty() {
+        v["zone"] = json!(zone); // an unused declared variable is a GraphQL error, so only with the zone block
+    }
+    v
 }
 
 fn text(v: &Value) -> String {
@@ -413,6 +428,19 @@ pub fn cf_panels(resp: &Value, label: &str, t0: i64, step: i64, n: usize, now: i
         .collect();
     let asn_rows = top_by(&fw, |r| text(&r["clientAsn"]), 10).into_iter().map(|(asn, c)| json!({ "asn": asn, "count": c })).collect();
 
+    let worker_panel = json!({ "title": "Worker", "series": [
+        fig("Requests", wsum("requests"), ""), fig("Errors", wsum("errors"), ""), fig("Subrequests", wsum("subrequests"), ""),
+        fig("CPU p50", wq("cpuTimeP50"), "ms"), fig("CPU p99", wq("cpuTimeP99"), "ms")] });
+    let quotas = json!([quota("Worker requests today (UTC)", today, 1e5, "requests")]);
+    if zone.is_null() {
+        // No zone queried (no domain yet): the Worker numbers only.
+        return Ok(json!({
+            "range": label, "t0": t0, "step": step, "generated": now, "rpm": null,
+            "note": "Edge traffic, security events and the request chart need a domain on Cloudflare (a zone). Until then this page shows the Worker only.",
+            "panels": [worker_panel], "quotas": quotas, "tables": [],
+        }));
+    }
+
     Ok(json!({
         "range": label, "t0": t0, "step": step, "generated": now,
         "rpm": rpm("Edge requests per minute", &traffic, step),
@@ -420,11 +448,9 @@ pub fn cf_panels(resp: &Value, label: &str, t0: i64, step: i64, n: usize, now: i
             { "title": "Edge traffic", "series": [{ "label": "Requests", "unit": "", "agg": "sum", "v": traffic }] },
             { "title": format!("Security events{of_latest}"), "series": [
                 fig("Events", fw.len() as f64, ""), fig("Blocked or challenged", blocks as f64, ""), fig("DDoS mitigations", ddos as f64, "")] },
-            { "title": "Worker", "series": [
-                fig("Requests", wsum("requests"), ""), fig("Errors", wsum("errors"), ""), fig("Subrequests", wsum("subrequests"), ""),
-                fig("CPU p50", wq("cpuTimeP50"), "ms"), fig("CPU p99", wq("cpuTimeP99"), "ms")] },
+            worker_panel,
         ],
-        "quotas": [quota("Worker requests today (UTC)", today, 1e5, "requests")],
+        "quotas": quotas,
         "tables": [
             table(&format!("Security events by action{of_latest}"),
                 json!([{ "key": "action", "label": "Action" }, { "key": "source", "label": "Source" }, { "key": "count", "label": "Events", "num": true }]), action_rows),
@@ -530,11 +556,27 @@ mod tests {
 
     #[test]
     fn cloudflare_query_and_vars() {
-        assert!(cf_query(60).contains("orderBy: [datetimeMinute_ASC]"));
-        assert!(cf_query(300).contains("t: datetimeFiveMinutes"));
+        assert!(cf_query(60, true).contains("orderBy: [datetimeMinute_ASC]"));
+        assert!(cf_query(300, true).contains("t: datetimeFiveMinutes"));
         let v = cf_vars("z", "a", "haltline-tier2", 1_700_000_000, 1_700_003_600);
         assert_eq!(v["start"], "2023-11-14T22:13:20Z");
         assert_eq!(v["dayStart"], "2023-11-14T00:00:00Z");
+    }
+
+    #[test]
+    fn cloudflare_without_a_zone_asks_and_shows_the_worker_only() {
+        let q = cf_query(60, false);
+        assert!(!q.contains("zones(") && !q.contains("$zone"), "{q}");
+        assert!(q.contains("accounts(filter") && q.trim_end().ends_with("} }"), "{q}");
+        assert!(cf_vars("", "a", "w", 0, 60).get("zone").is_none(), "no unused $zone variable");
+        let resp = json!({ "data": { "viewer": { "accounts": [{
+            "workers": [{ "sum": { "requests": 7.0, "errors": 1.0, "subrequests": 7.0 }, "quantiles": { "cpuTimeP50": 1000.0, "cpuTimeP99": 3000.0 } }],
+            "today": [{ "sum": { "requests": 42.0 } }] }] } } });
+        let out = cf_panels(&resp, "1h", 0, 60, 2, 0).unwrap();
+        assert!(out["rpm"].is_null() && out["note"].is_string());
+        assert_eq!(out["panels"].as_array().unwrap().len(), 1);
+        assert_eq!(out["panels"][0]["series"][0]["value"], 7.0);
+        assert_eq!(out["quotas"][0]["used"], 42.0);
     }
 
     #[test]

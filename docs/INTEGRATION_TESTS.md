@@ -288,7 +288,7 @@ starting and the helper exe running. Not yet run on a clean PC:
   `console/config.js`.
 - [x] **Lambda** redeployed (Create licence, Admins, KV IP blocking) with `ACCESS_AUD`; **Worker**
   redeployed (block list). Live attack tests afterwards: 24/25 (below).
-- [x] **Cognito admins** rkg270954@gmail.com and rajkumargupta7632@gmail.com created in `admin`
+- [x] **Cognito admins** (the 2 admin emails) created in `admin`
   (FORCE_CHANGE_PASSWORD, invite emails sent).
 - [ ] **First sign-in end to end:** Access code → Cognito temporary password → new password →
   authenticator → dashboard pages load through the Pages Function → Create licence → Add admin.
