@@ -779,7 +779,9 @@ def t35_signed_update_needs_release_key_newer_version_and_matching_hash():
     served, ran = {}, []
     class R:
         def __init__(self, b): self.content, self.text = b, b.decode(errors="replace")
-    orig = (agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY)
+    import shutil, tempfile
+    orig = (agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY, agent.IPC_DIR)
+    agent.IPC_DIR = tempfile.mkdtemp()   # not the real ProgramData\Telltale (locked to SYSTEM on an installed PC)
     agent.requests.get = lambda url, timeout: R(served[url])
     subprocess.Popen = lambda args, **kw: ran.append(args)
     agent.UPDATE_URL, agent.UPDATE_PUBKEY = "https://u.example/latest.json", pub
@@ -795,7 +797,8 @@ def t35_signed_update_needs_release_key_newer_version_and_matching_hash():
             assert f.read() == installer
         os.remove(path)
     finally:
-        agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY = orig
+        shutil.rmtree(agent.IPC_DIR, ignore_errors=True)
+        agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY, agent.IPC_DIR = orig
 
 
 @test
@@ -877,6 +880,69 @@ def t38_signed_licence_refusal_stops_agent_unsigned_does_not():
     finally:
         agent.requests.post, agent.ALERTS_DIR, h.ALERTS_DIR = old
         agent.STOP.clear()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@test
+def t39_sent_log_shows_what_left_the_pc_with_the_key_hidden():
+    """'What Haltline sends': every cloud request is kept for the user (last 100), licence key hidden"""
+    import json, shutil, tempfile
+    import telltale_helper as h
+    tmp = tempfile.mkdtemp()
+    old = (agent.ALERTS_DIR, h.ALERTS_DIR)
+    agent.ALERTS_DIR = h.ALERTS_DIR = tmp
+    try:
+        agent.record_sent("/v1/register", {"licence_key": "HL-ABCDE-12345-FGHJK-67890", "public_key": "B" * 88,
+                                           "key_kind": "tpm"}, "accepted")
+        names = agent.feature_names()
+        agent.record_sent("/v1/score", {"features": [0.5] * len(names)}, "BENIGN")
+        raw = open(os.path.join(tmp, agent.SENT_LOG), encoding="utf-8").read()
+        assert "67890" not in raw and "FGHJK" not in raw, "the licence key never reaches the user-readable log"
+        newest, first = h.read_sent()
+        assert newest["path"] == "/v1/score" and newest["result"] == "BENIGN"
+        assert newest["sent"]["features"][names[0]] == 0.5 and len(newest["sent"]["features"]) == len(names)
+        assert first["sent"]["licence_key"].startswith("HL-") and first["sent"]["key_kind"] == "tpm"
+        for i in range(agent.SENT_KEEP + 5):
+            agent.record_sent("/v1/score", {"features": []}, str(i))
+        kept = h.read_sent(limit=1000)
+        assert len(kept) == agent.SENT_KEEP and kept[0]["result"] == str(agent.SENT_KEEP + 4), "only the last 100"
+        assert h.read_sent.__doc__ and h.WHAT["/v1/report"]
+        about = {"name": "evil.exe", "pid": 4242, "path": r"C:\Users\x\evil.exe"}
+        agent.record_sent("/v1/score", {"features": [0.1] * len(names)}, "KILL", about)
+        e = h.read_sent()[0]
+        assert e["about"] == about, "the window shows which program it was"
+        assert "evil.exe" not in json.dumps(e["sent"]) and "4242" not in json.dumps(e["sent"]), "...but it is not sent"
+    finally:
+        agent.ALERTS_DIR, h.ALERTS_DIR = old
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@test
+def t40_problem_report_and_theme_setting():
+    """'Report a problem' reaches send_report (capped, versioned); the theme choice is saved per user"""
+    import shutil, tempfile
+    import telltale_helper as h
+    sent = []
+    orig_send, orig_settings = agent.send_report, h.SETTINGS
+    agent.send_report = lambda r: sent.append(r) or True
+    tmp = tempfile.mkdtemp()
+    try:
+        w = agent.DecisionWatcher()
+        w.apply({"id": "problem-1", "choice": "problem", "text": "   "})
+        assert sent == [], "an empty report is dropped"
+        w.apply({"id": "problem-2", "choice": "problem", "text": "The tray icon\nvanished " + "x" * 2000})
+        r = sent[0]
+        assert r["name"] == "(problem report)" and r["reason"].startswith("The tray icon vanished")
+        assert sum(len(x) for x in r["reasons"][:-1]) == 1000 and r["reasons"][-1] == f"Haltline {agent.AGENT_VERSION}"
+        h.SETTINGS = os.path.join(tmp, "Haltline", "settings.json")
+        assert h.load_theme() == "system", "follows Windows until the user picks"
+        h.save_theme("dark")
+        assert h.load_theme() == "dark" and h.palette() is h.PALETTES["dark"]
+        h.save_theme("neon")
+        assert h.load_theme() == "system", "junk falls back to system"
+        assert h.palette("light") is h.PALETTES["light"] and h.system_theme() in ("light", "dark")
+    finally:
+        agent.send_report, h.SETTINGS = orig_send, orig_settings
         shutil.rmtree(tmp, ignore_errors=True)
 
 

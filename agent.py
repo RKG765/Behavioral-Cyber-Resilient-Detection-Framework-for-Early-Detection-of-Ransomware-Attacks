@@ -109,7 +109,7 @@ SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY") or RELEASE.get("server_pub
 PINNED_CA       = os.path.join(BASE_DIR, "pinned_roots.pem")
 
 # ── Signed updates (#36): a manifest signed with the release key, checked daily (release builds only) ──
-AGENT_VERSION   = "0.2.1"
+AGENT_VERSION   = "0.2.2"
 UPDATE_URL      = os.environ.get("EDR_UPDATE_URL") or RELEASE.get("update_url", "")
 UPDATE_PUBKEY   = os.environ.get("EDR_UPDATE_PUBKEY") or RELEASE.get("update_pubkey", "")
 UPDATE_EVERY_S  = 24 * 3600
@@ -237,7 +237,11 @@ TRUSTED_SIGNERS = {
 }
 
 # ── Logging Setup ── (#7, #24)
-LOG_FILE     = os.path.join(BASE_DIR, "agent.log")
+# Release builds log to ProgramData\Telltale (SYSTEM and Administrators only): the log names every
+# program on the PC and the server address, so it must not sit in Program Files where all users read.
+LOG_DIR      = IPC_DIR if "__compiled__" in globals() else BASE_DIR   # Nuitka sets __compiled__ in the .exe
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE     = os.path.join(LOG_DIR, "agent.log")
 LOG_MAX_MB   = 5
 LOG_BACKUPS  = 3
 
@@ -851,6 +855,43 @@ LICENCE_CHECK_S = 6 * 3600   # re-check even when nothing is escalated, so a del
 LICENCE_STATUS = "licence.status"   # in ALERTS_DIR (the user's helper can read it); not .json, so not an alert
 
 
+SENT_LOG = "sent.jsonl"   # in ALERTS_DIR: what this PC sent, for the helper's "What Haltline sends" window
+SENT_KEEP = 100
+_sent_lock = threading.Lock()
+
+
+def record_sent(path, body, result, about=None):
+    """Transparency: keep the last SENT_KEEP requests to the cloud, exactly as sent (licence key hidden,
+    features labelled), and what came back. Never lets a logging problem break a request."""
+    try:
+        shown = dict(body)
+        if "licence_key" in shown:
+            shown["licence_key"] = str(shown["licence_key"])[:3] + "... (hidden)"
+        if "public_key" in shown:
+            shown["public_key"] = str(shown["public_key"])[:16] + "..."
+        if isinstance(shown.get("features"), list):
+            try:
+                shown["features"] = dict(zip(feature_names(), shown["features"]))
+            except Exception:
+                pass
+        # "about": which program it concerned (name, PID, path) -- kept here only, NOT part of what was sent
+        line = json.dumps({"ts": round(time.time(), 3), "path": path, "sent": shown, "result": result, "about": about},
+                          separators=(",", ":"))
+        p = os.path.join(ALERTS_DIR, SENT_LOG)
+        with _sent_lock:
+            try:
+                with open(p, encoding="utf-8") as f:
+                    lines = f.read().splitlines()[-(SENT_KEEP - 1):]
+            except FileNotFoundError:
+                lines = []
+            os.makedirs(ALERTS_DIR, exist_ok=True)
+            with open(p + ".tmp", "w", encoding="utf-8") as f:
+                f.write("\n".join(lines + [line]) + "\n")
+            os.replace(p + ".tmp", p)
+    except Exception as e:
+        logger.warning(f"[SENT] could not record a request ({e})")
+
+
 def licence_lost(reason):
     """Stop protecting entirely: main()'s loop ends on STOP and the service stops cleanly, so Windows
     doesn't restart it. Only called for a server-signed refusal, so a faked or blocked reply can't do it."""
@@ -896,10 +937,10 @@ class CloudClient:
             pass
         logger.info(f"[CLOUD] device {self.device_id} registered ({self.key.kind} key)")
 
-    def score(self, features):
+    def score(self, features, about=None):
         if not self.registered:
             self.register()
-        return self._post("/v1/score", {"features": features})
+        return self._post("/v1/score", {"features": features}, about=about)
 
     def report(self, body):
         """A report the user chose to send (#34). Only via the primary (Cloudflare)."""
@@ -907,7 +948,17 @@ class CloudClient:
             self.register()
         return self._post("/v1/report", body, failover=False)
 
-    def _post(self, path, body, failover=True):
+    def _post(self, path, body, failover=True, about=None):
+        """_send, and a copy of what was sent for the user's "What Haltline sends" window."""
+        try:
+            data = self._send(path, body, failover)
+        except Exception as e:
+            record_sent(path, body, f"failed: {e}"[:200], about)
+            raise
+        record_sent(path, body, data.get("verdict") or "accepted", about)
+        return data
+
+    def _send(self, path, body, failover=True):
         raw = json.dumps(body, separators=(",", ":")).encode()
         body_hash = hashlib.sha256(raw).hexdigest()
         order = list(self.endpoints) if failover else self.endpoints[:1]
@@ -1022,10 +1073,10 @@ class UpdateChecker:
         self._stop.set()
 
 
-def ask_tier2(payload):
+def ask_tier2(payload, about=None):
     """Tier-2 verdict: the signed cloud client when configured, else the local server.py."""
     if cloud_client is not None:
-        return cloud_client.score(payload["features"])
+        return cloud_client.score(payload["features"], about)
     resp = requests.post(CLOUD_API_URL, json=payload, timeout=5)
     resp.raise_for_status()
     return resp.json()
@@ -1226,19 +1277,25 @@ REASONS = {
 _feature_names = None
 
 
-def explain(features):
-    """Plain-language reasons from the features that are set; [] when there are none."""
+def feature_names():
+    """The 99 feature names, in vector order (cached)."""
     global _feature_names
-    if features is None:
-        return []
     if _feature_names is None:
         if edr_sensor is not None:
             _feature_names = edr_sensor.feature_names()
         else:
             with open(FEATURE_META_PATH, encoding="utf-8") as f:
                 _feature_names = json.load(f)["features"]
+    return _feature_names
+
+
+def explain(features):
+    """Plain-language reasons from the features that are set; [] when there are none."""
+    if features is None:
+        return []
+    names = feature_names()
     vec = np.asarray(features, dtype=float).ravel()
-    return [text for name, text in REASONS.items() if vec[_feature_names.index(name)] > 0]
+    return [text for name, text in REASONS.items() if vec[names.index(name)] > 0]
 
 
 def ask_user(proc, pid, name, path, reason, features=None):
@@ -1524,7 +1581,8 @@ class BehaviorMonitor:
         }
 
         try:
-            data       = ask_tier2(payload)
+            # name / PID / path stay on this PC: shown in "What Haltline sends", never sent
+            data       = ask_tier2(payload, {"name": name, "pid": pid, "path": path})
             verdict    = data.get("verdict", "UNKNOWN")
             # The signed cloud API returns the verdict only (no probability, plan 4.1).
             confidence = "n/a" if data.get("confidence") is None else f"{float(data['confidence']):.4f}"
@@ -1724,6 +1782,15 @@ class DecisionWatcher:
 
     def apply(self, decision):
         alert_id, choice = str(decision.get("id", "")), decision.get("choice")
+        if choice == "problem":
+            # "Report a problem" from the helper: free text, capped; sent like any report (device-signed).
+            text = " ".join(str(decision.get("text", "")).split())[:1000]
+            if text:
+                parts = [text[i:i + 200] for i in range(0, len(text), 200)]
+                sent = send_report({"name": "(problem report)", "path": "", "reason": parts[0],
+                                    "reasons": parts + [f"Haltline {AGENT_VERSION}"]})
+                logger.info(f"[USER PROBLEM REPORT] {'sent' if sent else 'saved for upload'}")
+            return
         alert_path = os.path.join(ALERTS_DIR, alert_id + ".json")
         if not (len(alert_id) == 32 and alert_id.isalnum() and os.path.exists(alert_path)):
             logger.warning(f"Ignored decision for unknown alert {alert_id[:40]!r}")

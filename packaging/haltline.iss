@@ -28,6 +28,8 @@ CloseApplications=force
 RestartApplications=no
 UninstallDisplayName=Haltline
 WizardStyle=modern
+SetupIconFile=haltline.ico
+UninstallDisplayIcon={app}\haltline-helper.exe
 
 [Files]
 Source: "..\build\nuitka\haltline_service.dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -36,8 +38,26 @@ Source: "..\install_windows.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\edr_sensor\live\sysmon_edr.xml"; DestDir: "{app}\edr_sensor\live"; Flags: ignoreversion
 Source: "..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
 
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
+
+[Icons]
+; "Haltline" in Start (and Start search) and optionally on the desktop: opens the window, or offers to
+; start Haltline again when it was stopped. The tray itself also starts at every sign-in (helper task).
+Name: "{autoprograms}\Haltline"; Filename: "{app}\haltline-helper.exe"; Parameters: "--open"; WorkingDir: "{app}"; Comment: "Haltline ransomware protection"
+Name: "{autodesktop}\Haltline"; Filename: "{app}\haltline-helper.exe"; Parameters: "--open"; WorkingDir: "{app}"; Tasks: desktopicon
+
+[Run]
+; Show the tray icon now instead of at the next sign-in (not on silent auto-updates).
+Filename: "{app}\haltline-helper.exe"; WorkingDir: "{app}"; Description: "Show the Haltline icon"; Flags: nowait postinstall runasoriginaluser skipifsilent
+
+[InstallDelete]
+; Logs used to live here, readable by every user; 0.2.2+ logs to ProgramData\Telltale (admins only).
+Type: files; Name: "{app}\agent.log*"
+
 [UninstallDelete]
 Type: files; Name: "{app}\agent.log*"
+Type: files; Name: "{commonappdata}\Telltale\agent.log*"
 Type: files; Name: "{app}\whitelist.db"
 
 [Code]

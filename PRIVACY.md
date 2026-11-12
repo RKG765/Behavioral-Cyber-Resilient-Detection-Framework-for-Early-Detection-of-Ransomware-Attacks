@@ -24,6 +24,10 @@ Only when you click "Send report" in a Haltline alert:
 
 Haltline never sends documents, photos, keystrokes, browsing history or passwords.
 
+You can check this yourself: right-click the Haltline icon next to the clock and choose
+"What Haltline sends". It lists the last 100 requests this PC sent, each exactly as sent (your
+licence key hidden), and the answer that came back.
+
 2. WHERE IT GOES
 
   - Cloudflare (worldwide network) receives the requests and runs the first check.

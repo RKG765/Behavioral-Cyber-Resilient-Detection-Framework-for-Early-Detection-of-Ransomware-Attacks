@@ -28,6 +28,11 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Build = Join-Path $Root "build"
+# Keep Nuitka's cache and the compiler's temp files next to the build (same drive as the repo),
+# not on C: -- a full system drive stops the C compile with "No space left on device".
+$env:NUITKA_CACHE_DIR = Join-Path $Build "nuitka-cache"
+$env:TEMP = $env:TMP = Join-Path $Build "tmp"
+New-Item -ItemType Directory -Force -Path $env:NUITKA_CACHE_DIR, $env:TEMP | Out-Null
 $Py = (Get-Command python).Source
 function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Check($what) { if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" } }
@@ -60,6 +65,7 @@ if (-not $SkipNuitka) {
 
     Step "Nuitka: haltline-agent.exe (service)"
     & $Py -m nuitka @common --output-filename=haltline-agent.exe --product-name="Haltline Agent" `
+        "--windows-icon-from-ico=$Root\packaging\haltline.ico" `
         --file-description="Haltline Agent service" `
         "--include-data-files=$Root\tier1_behavioral.onnx=tier1_behavioral.onnx" `
         "--include-data-files=$Root\tier1_behavioral.onnx.data=tier1_behavioral.onnx.data" `
@@ -70,6 +76,12 @@ if (-not $SkipNuitka) {
     Step "Nuitka: haltline-helper.exe (the alert dialog, no console window)"
     & $Py -m nuitka @common --output-filename=haltline-helper.exe --product-name="Haltline" `
         --file-description="Haltline alerts" --enable-plugin=tk-inter --windows-console-mode=disable `
+        "--windows-icon-from-ico=$Root\packaging\haltline.ico" `
+        "--include-data-files=$Root\packaging\haltline.ico=haltline.ico" `
+        "--include-data-files=$Root\packaging\haltline-tray-dark.ico=haltline-tray-dark.ico" `
+        "--include-data-files=$Root\packaging\haltline-tray-light.ico=haltline-tray-light.ico" `
+        "--include-data-files=$Root\packaging\haltline-tray-off-dark.ico=haltline-tray-off-dark.ico" `
+        "--include-data-files=$Root\packaging\haltline-tray-off-light.ico=haltline-tray-off-light.ico" `
         (Join-Path $Root "telltale_helper.py"); Check "Nuitka (helper)"
     Remove-Item Env:PYTHONPATH
 }

@@ -20,6 +20,29 @@ Durable Object counter. **Item 4 (24h) not applied:** the Access app was made by
 **Not checked live yet (needs your sign-in):** silent sign-in, Save seats / Delete licence, change
 role / Remove admin.
 
+**0.2.1 published** (GitHub pre-release, repo stays public); installed on this PC (TPM key, IP
+recorded). Secret scan of the public repo: clean; the two admin emails removed from the docs
+(still in old commits).
+
+**Cloudflare page:** works without a domain now (Worker panel + daily quota; traffic, security
+events and the chart need a zone). **Still needs a token:** Cloudflare → My Profile → API Tokens →
+Create Token → Custom → permission *Account · Account Analytics · Read* (your account only). Put it
+in `infra/aws/secrets.tfvars` as `cf_analytics_token = "..."`, then
+`AWS_PROFILE=haltline terraform apply -var-file=secrets.tfvars` in `infra/aws`.
+
+## 0.2.2 (in progress): tray icon and "What Haltline sends"
+- **Tray icon** (helper, pywin32): shield while protecting, warning when stopped. Menu: *What Haltline
+  sends*, *Privacy notice*, *Stop Haltline* / *Start Haltline* (UAC: admin only, so ransomware
+  running as the user can't), *Close this icon* (only when stopped). One copy per session. Start
+  menu entry "Haltline"; the installer shows the icon right away.
+- **What Haltline sends:** the agent keeps the last 100 cloud requests in `alerts\sent.jsonl`
+  exactly as sent (licence key hidden, the 99 features labelled) with the answer; the window lists
+  them and shows each one's JSON. Test t39.
+- **Ending the task in Task Manager** brings it back within a minute: the service's failure
+  actions restart it, by design. Stop it from the tray (admin).
+- Tests 39/39 (t35 now uses a temp folder: on an installed PC `ProgramData\Telltale` is locked to
+  SYSTEM). Then: build, install over 0.2.1, try the tray, publish `v0.2.2`.
+
 ## What changed (for reference)
 1. **Licence CRUD** (Lambda + console): list and create already existed; now **Save seats** (never
    below the PCs already using it) and **Delete**. Delete revokes every PC registered with that key
