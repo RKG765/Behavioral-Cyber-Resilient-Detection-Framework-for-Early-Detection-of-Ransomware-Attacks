@@ -366,7 +366,13 @@ async fn verified_device(app: &App, req: &Request, path: &str) -> Result<(String
 
 async fn score_route(app: &App, req: &Request) -> Result<Response<Body>, Error> {
     let started = std::time::Instant::now();
-    let ip = header(req, "cloudfront-viewer-address").rsplit_once(':').map_or("", |(ip, _)| ip).to_string();
+    let mut ip = header(req, "cloudfront-viewer-address").rsplit_once(':').map_or("", |(ip, _)| ip).to_string();
+    if ip.is_empty() {
+        // Direct Lambda URL (no CloudFront in front yet): the caller's IP from the request context.
+        if let Some(lambda_http::request::RequestContext::ApiGatewayV2(c)) = req.request_context_ref() {
+            ip = c.http.source_ip.clone().unwrap_or_default();
+        }
+    }
     let mut ev = LogEvent {
         device: signed_headers(req).device.to_string(),
         ip,

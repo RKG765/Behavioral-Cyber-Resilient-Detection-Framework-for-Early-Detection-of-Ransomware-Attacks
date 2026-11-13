@@ -955,8 +955,13 @@ def t41_tier2_benign_is_remembered_per_file_not_for_interpreters():
     tool = os.path.join(tmp, "tool.exe")
     with open(tool, "wb") as f:
         f.write(b"MZ not signed")
-    orig = (agent.cleared, agent.ask_tier2)
+    orig = (agent.cleared, agent.ask_tier2, agent.admin_only_path)
     try:
+        assert not agent.admin_only_path(tool), "a temp folder is user-writable"
+        assert agent.admin_only_path(r"C:\Program Files\Git\cmd\git.exe")
+        assert agent.admin_only_path(r"C:\Windows\System32\where.exe")
+        assert not agent.ClearedCache.eligible(tool), "user-writable folders are never cleared (forgeable fingerprint)"
+        agent.admin_only_path = lambda p: True   # the rest of this test runs in a temp folder
         # the cache itself: bounded, expires, survives a restart, corrupt file -> empty
         c = agent.ClearedCache(store, ttl=60, cap=3)
         for i in range(5):
@@ -1008,7 +1013,7 @@ def t41_tier2_benign_is_remembered_per_file_not_for_interpreters():
         agent._enforce_kill(None, 0, "evil.exe", r"C:\evil.exe", "test")
         assert len(agent.cleared) == 0
     finally:
-        agent.cleared, agent.ask_tier2 = orig
+        agent.cleared, agent.ask_tier2, agent.admin_only_path = orig
         shutil.rmtree(tmp, ignore_errors=True)
 
 

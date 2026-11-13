@@ -346,6 +346,19 @@ def is_protected_system_path(exe_path: str) -> bool:
     return any(p.startswith(d) for d in PROTECTED_DIR_PREFIXES)
 
 
+PROGRAM_FILES_PREFIXES = tuple({_dir_prefix(v) for v in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+                                                      os.environ.get("ProgramW6432")) if v})
+
+
+def admin_only_path(exe_path: str) -> bool:
+    """In a folder only administrators can write (Windows system folders, Program Files).
+    shortcut: assumes installers keep Program Files ACLs default; check the ACL if that proves untrue."""
+    p = _norm_path(exe_path)
+    return bool(p) and (is_protected_system_path(exe_path) or
+                        (not any(p.startswith(w) for w in USER_WRITABLE_PREFIXES)
+                         and any(p.startswith(d) for d in PROGRAM_FILES_PREFIXES)))
+
+
 def file_fingerprint(exe_path: str):
     """
     (normalized_path, mtime_ns, size) or None if the file can't be stat'd.
@@ -432,8 +445,10 @@ class ClearedCache:
 
     @staticmethod
     def eligible(exe_path):
+        # Admin-only folders only: path + size + mtime can be forged (a backdated, same-size swap) where
+        # a normal program can write, e.g. Downloads or AppData.
         name = os.path.basename(exe_path or "").lower()
-        return bool(name) and name not in INTERPRETERS and name not in ALWAYS_WATCH
+        return bool(name) and name not in INTERPRETERS and name not in ALWAYS_WATCH and admin_only_path(exe_path)
 
     def allowed(self, fp):
         if fp is None:
@@ -1616,6 +1631,7 @@ class BehaviorMonitor:
             logger.debug(f"[GHOST]      {name} PID:{pid} exited before triage -- {verdict}")
             return
         e["path"] = path
+        e["fp"] = file_fingerprint(path)   # short-lived programs end up here: let Tier 2's BENIGN stick
         logger.debug(f"[GHOST]      {name} PID:{pid} exited before triage -- judging recorded "
                      f"behavior  path={path}")
         self._finalize_exited(e, quiet=True)

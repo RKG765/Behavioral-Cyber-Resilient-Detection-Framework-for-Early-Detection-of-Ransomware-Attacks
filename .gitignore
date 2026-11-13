@@ -134,3 +134,6 @@ tools/
 edr_sensor/live/holdout/
 edr_sensor/live/results/
 .streamlit/secrets.toml
+
+# Live data exported for reports (IP addresses, device IDs): never commit
+report_data/
