@@ -946,6 +946,72 @@ def t40_problem_report_and_theme_setting():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@test
+def t41_tier2_benign_is_remembered_per_file_not_for_interpreters():
+    """A file Tier 2 allowed isn't sent again (7 days, same file only); never interpreters; wiped on a threat"""
+    import shutil, tempfile
+    tmp = tempfile.mkdtemp()
+    store = os.path.join(tmp, "cleared.json")
+    tool = os.path.join(tmp, "tool.exe")
+    with open(tool, "wb") as f:
+        f.write(b"MZ not signed")
+    orig = (agent.cleared, agent.ask_tier2)
+    try:
+        # the cache itself: bounded, expires, survives a restart, corrupt file -> empty
+        c = agent.ClearedCache(store, ttl=60, cap=3)
+        for i in range(5):
+            c.add((f"p{i}", 1, 1))
+        assert len(c) == 3 and not c.allowed(("p0", 1, 1)) and c.allowed(("p4", 1, 1)), "oldest dropped"
+        c.save(force=True)
+        assert agent.ClearedCache(store, ttl=60).allowed(("p4", 1, 1)), "survives a restart"
+        assert not agent.ClearedCache(store, ttl=0).allowed(("p4", 1, 1)), "expired entries ignored"
+        with open(store, "w") as f:
+            f.write("{not json")
+        assert len(agent.ClearedCache(store)) == 0
+        assert agent.ClearedCache.eligible(tool) and not agent.ClearedCache.eligible(r"C:\x\python.exe")
+        assert not agent.ClearedCache.eligible(r"C:\Windows\System32\cmd.exe"), "ALWAYS_WATCH never cleared"
+
+        # end to end: grey zone -> Tier 2 BENIGN -> remembered -> next run skips the cloud
+        reset_agent_state(score=0.5)
+        agent.cleared = agent.ClearedCache(store)
+        asked = []
+        agent.ask_tier2 = lambda payload, about=None: asked.append(about) or {"verdict": "BENIGN"}
+        assert agent._triage(1, "tool.exe", tool)[0] == "unknown", "unknown before Tier 2 has seen it"
+        p = spawn()
+        agent.behavior_monitor.register(p.pid, "tool.exe", tool)
+        _exit_and_settle(p)
+        assert asked and agent.cleared.allowed(agent.file_fingerprint(tool)), "Tier 2's BENIGN is remembered"
+        assert agent._triage(2, "tool.exe", tool)[0] == "cleared", "second run: no cloud request"
+        with open(tool, "ab") as f:
+            f.write(b"changed")   # an update or a swap: new fingerprint, checked again
+        assert agent._triage(3, "tool.exe", tool)[0] == "unknown"
+
+        # a file changed between starting and the verdict is not remembered
+        agent.cleared.clear()
+        p = spawn()
+        agent.behavior_monitor.register(p.pid, "tool.exe", tool)
+        with open(tool, "ab") as f:
+            f.write(b"swapped")
+        _exit_and_settle(p)
+        assert len(agent.cleared) == 0, "swapped file must not inherit the verdict"
+
+        # interpreters are never remembered, even when Tier 2 allows a run
+        py = os.path.join(tmp, "python.exe")
+        shutil.copy(tool, py)
+        p = spawn()
+        agent.behavior_monitor.register(p.pid, "python.exe", py)
+        _exit_and_settle(p)
+        assert len(agent.cleared) == 0 and agent._triage(4, "python.exe", py)[0] == "unknown"
+
+        # any threat wipes every earlier "safe"
+        agent.cleared.add(agent.file_fingerprint(tool))
+        agent._enforce_kill(None, 0, "evil.exe", r"C:\evil.exe", "test")
+        assert len(agent.cleared) == 0
+    finally:
+        agent.cleared, agent.ask_tier2 = orig
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ───────────────────────── summary ─────────────────────────
 for p in SPAWNED:
     try: p.kill()

@@ -109,7 +109,7 @@ SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY") or RELEASE.get("server_pub
 PINNED_CA       = os.path.join(BASE_DIR, "pinned_roots.pem")
 
 # ── Signed updates (#36): a manifest signed with the release key, checked daily (release builds only) ──
-AGENT_VERSION   = "0.2.2"
+AGENT_VERSION   = "0.2.3"
 UPDATE_URL      = os.environ.get("EDR_UPDATE_URL") or RELEASE.get("update_url", "")
 UPDATE_PUBKEY   = os.environ.get("EDR_UPDATE_PUBKEY") or RELEASE.get("update_pubkey", "")
 UPDATE_EVERY_S  = 24 * 3600
@@ -397,6 +397,91 @@ class LRUCache:
     def __len__(self) -> int:
         with self._lock:
             return len(self._data)
+
+
+# ── Cleared by Tier 2: a file Tier 2 allowed isn't sent again for CLEARED_TTL_S ───────────
+# Light on the PC by design: an in-memory dict keyed on the fingerprint _triage already takes
+# (path, mtime, size -- no file hashing), bounded, and saved at most once a minute.
+CLEARED_TTL_S = 7 * 86400
+CLEARED_MAX = 2000
+CLEARED_SAVE_EVERY_S = 60
+# Interpreters run whatever script they are given: the same signed file can be harmless one
+# run and ransomware the next, so they (and the abusable tools in ALWAYS_WATCH) are never cleared.
+INTERPRETERS = {"bash.exe", "sh.exe", "zsh.exe", "python.exe", "pythonw.exe", "py.exe", "node.exe",
+                "deno.exe", "bun.exe", "perl.exe", "ruby.exe", "php.exe", "java.exe", "javaw.exe",
+                "wsl.exe", "autohotkey.exe", "autoit3.exe"}
+
+
+class ClearedCache:
+    """fingerprint -> when Tier 2 allowed that exact file. Thread-safe."""
+
+    def __init__(self, path, ttl=CLEARED_TTL_S, cap=CLEARED_MAX):
+        self.path, self.ttl, self.cap = path, ttl, cap
+        self._d = OrderedDict()
+        self._lock = threading.Lock()
+        self._dirty, self._saved = False, 0.0
+        try:
+            with open(path, encoding="utf-8") as f:
+                rows = json.load(f)
+            now = time.time()
+            for fp_path, mtime, size, t in rows[-cap:]:
+                if 0 <= now - t < ttl:
+                    self._d[(fp_path, int(mtime), int(size))] = t
+        except (OSError, ValueError, TypeError):
+            pass   # first run, or an unreadable file: start empty
+
+    @staticmethod
+    def eligible(exe_path):
+        name = os.path.basename(exe_path or "").lower()
+        return bool(name) and name not in INTERPRETERS and name not in ALWAYS_WATCH
+
+    def allowed(self, fp):
+        if fp is None:
+            return False
+        with self._lock:
+            t = self._d.get(fp)
+            if t is None:
+                return False
+            if time.time() - t >= self.ttl:
+                del self._d[fp]
+                self._dirty = True
+                return False
+            return True
+
+    def add(self, fp):
+        with self._lock:
+            self._d[fp] = time.time()
+            self._d.move_to_end(fp)
+            while len(self._d) > self.cap:
+                self._d.popitem(last=False)
+            self._dirty = True
+        self.save()
+
+    def clear(self):
+        """After any threat: forget every earlier 'safe', so nothing stale stays trusted."""
+        with self._lock:
+            had = bool(self._d)
+            self._d.clear()
+            self._dirty = had or self._dirty
+        self.save(force=True)
+
+    def save(self, force=False):
+        now = time.time()
+        with self._lock:
+            if not self._dirty or (not force and now - self._saved < CLEARED_SAVE_EVERY_S):
+                return
+            rows = [[fp[0], fp[1], fp[2], t] for fp, t in self._d.items()]
+            self._dirty, self._saved = False, now
+        try:
+            with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(rows, f, separators=(",", ":"))
+            os.replace(self.path + ".tmp", self.path)
+        except OSError as e:
+            logger.warning(f"[CLEARED] could not save ({e}) -- kept in memory")
+
+    def __len__(self):
+        with self._lock:
+            return len(self._d)
 
 _wintrust_dll = ctypes.windll.wintrust
 
@@ -1104,6 +1189,7 @@ sequence_extractor = None
 whitelist_db = None
 behavior_monitor = None
 cloud_client = None
+cleared = None   # ClearedCache, set in main()
 
 
 def actions_enforced() -> bool:
@@ -1145,6 +1231,8 @@ def _triage(pid: int, process_name: str, exe_path: str):
     fp = file_fingerprint(exe_path)
     if fp is not None and fp in VERIFIED_PATH_CACHE:
         return "cached", ""
+    if cleared is not None and ClearedCache.eligible(exe_path) and cleared.allowed(fp):
+        return "cleared", ""
     is_trusted, signer = verify_signature(exe_path)
     if is_trusted:
         _cache_trusted(exe_path, fp)
@@ -1213,6 +1301,8 @@ def handle_new_process(pid: int, process_name: str):
         logger.debug(f"SKIP (critical, protected path) PID:{pid} {process_name}")
     elif verdict == "cached":
         logger.debug(f"ALLOWED (cached) PID:{pid} {process_name}")
+    elif verdict == "cleared":
+        logger.debug(f"ALLOWED (cleared by Tier 2 earlier) PID:{pid} {process_name}")
     elif verdict == "trusted":
         logger.info(f"[TRUSTED]  {process_name} allowed PID:{pid} ({signer[:60]})")
     elif verdict == "whitelisted":
@@ -1320,6 +1410,8 @@ def ask_user(proc, pid, name, path, reason, features=None):
 
 def _enforce_kill(proc, pid, name, path, reason, features=None):
     """Kill, ask the user (#34), or just log in dry-run mode (#23)."""
+    if cleared is not None:
+        cleared.clear()   # a threat on this PC: no earlier "safe" stays trusted
     if AGENT_MODE == "ask" and not getattr(sequence_extractor, "is_simulated", True):
         return ask_user(proc, pid, name, path, reason, features)
     if not actions_enforced():
@@ -1368,7 +1460,7 @@ class BehaviorMonitor:
                 logger.error(f"Monitor full ({MAX_MONITORED}) -- PID:{pid} {name} NOT watched")
                 return False
             self._watch[pid] = {
-                "pid": pid, "name": name, "path": path, "created": created,
+                "pid": pid, "name": name, "path": path, "created": created, "fp": file_fingerprint(path),
                 "started": time.time(), "max_score": 0.0, "scored": 0,
                 "last_seq": None, "exited_at": None, "pid_reused": False,
                 "extended": False,
@@ -1620,6 +1712,10 @@ class BehaviorMonitor:
                     f"[CLOUD VERDICT]  {name} ALLOWED by Tier-2 "
                     f"(Score: {confidence})  PID:{pid}"
                 )
+                fp0 = e.get("fp")
+                if (verdict == "BENIGN" and cleared is not None and fp0 is not None
+                        and ClearedCache.eligible(path) and file_fingerprint(path) == fp0):
+                    cleared.add(fp0)   # same file that ran: next time no cloud request
 
         except requests.exceptions.ConnectionError:
             if e.get("exited_at"):
@@ -1929,7 +2025,7 @@ def main():
       6. Start thread pool
       7. Start WMI listener (blocks main thread)
     """
-    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor, cloud_client, AGENT_MODE
+    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor, cloud_client, cleared, AGENT_MODE
 
     if "--mode" in sys.argv:
         i = sys.argv.index("--mode")
@@ -1977,6 +2073,10 @@ def main():
 
     # ── Initialize SQLite whitelist (#8 Layer 1B) ───────────
     whitelist_db = CustomWhitelist()
+
+    # ── Files Tier 2 already allowed: no repeat cloud checks for 7 days ──
+    cleared = ClearedCache(os.path.join(IPC_DIR, "cleared.json"))
+    logger.info(f"Cleared-by-Tier-2 cache: {len(cleared)} file(s)")
 
     # ── Signed cloud Tier 2 (#33) -- register now; a failure is retried on first escalation ──
     cloud_client = make_cloud_client()
@@ -2078,6 +2178,8 @@ def main():
             sequence_extractor.stop()
         if whitelist_db:
             whitelist_db.close()
+        if cleared is not None:
+            cleared.save(force=True)   # keep the last minute's "safe" files
         logger.info("Agent stopped.")
 
 

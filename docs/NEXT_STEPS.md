@@ -133,3 +133,15 @@ Save seats and Delete on a test licence, Admins → change role / Remove on a te
 15. Domain (WAF + Cloudflare rate-limit rules), CloudFront once AWS verifies the account, passkeys
     once the AWS Terraform provider supports passkey MFA (#50110), real code signing (SignPath or a
     paid certificate), and the beta group (`docs/BETA.md`).
+
+## 0.2.3 (built, not yet published): Tier 2's "safe" remembered per file
+- When Tier 2 answers BENIGN, the agent remembers that exact file (path + size + modification time,
+  the fingerprint triage already takes) for 7 days: the next run is "cleared" with no cloud request.
+- Never for interpreters (bash, python, node, perl, java, ...) or the ALWAYS_WATCH tools: the same
+  signed file can run a different, malicious script. Only if the file is unchanged between starting
+  and the verdict (no swap). A changed file gets a new fingerprint and is checked again. Any threat on
+  the PC wipes the whole list.
+- Light on the PC: in memory (2,000 entries ~0.7 MB, lookup <1 us), saved to
+  `ProgramData\Telltale\cleared.json` (~210 KB) at most once a minute and on shutdown. Test t41.
+- Still open from the same discussion: trust Git for Windows / PSF / OpenJS signers and add the
+  interpreters to ALWAYS_WATCH (step 1); shared reputation across users (step 3, needs a privacy change).
