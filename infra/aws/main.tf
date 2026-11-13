@@ -112,7 +112,7 @@ variable "cf_zt_token" {
 
 # ───────────── Cloud pages (plan 6.3) ─────────────
 variable "cf_analytics_token" {
-  description = "Cloudflare token with Account Analytics: Read and Zone Analytics: Read only (Cloud -> Cloudflare page). Empty turns the page off."
+  description = "Cloudflare token with Account Analytics: Read (and Zone Analytics: Read once there's a zone) for the Cloud -> Cloudflare page. Empty: cf_api_token is used, which then needs Account Analytics: Read added."
   type        = string
   sensitive   = true
   default     = ""
@@ -315,7 +315,7 @@ resource "aws_lambda_function" "api" {
       COGNITO_CLIENT_ID          = aws_cognito_user_pool_client.console.id
       CF_ACCESS_LIST_ID          = var.cf_access_list_id
       CF_ZT_TOKEN                = var.cf_zt_token
-      CF_ANALYTICS_TOKEN         = var.cf_analytics_token
+      CF_ANALYTICS_TOKEN         = var.cf_analytics_token != "" ? var.cf_analytics_token : var.cf_api_token
       CF_ZONE_ID                 = var.cf_zone_id
       CF_WORKER_SCRIPT           = var.cf_worker_script
       CLOUDFRONT_DISTRIBUTION_ID = var.cloudfront_distribution_id
