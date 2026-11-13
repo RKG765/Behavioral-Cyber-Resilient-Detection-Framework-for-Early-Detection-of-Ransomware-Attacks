@@ -134,7 +134,7 @@ Save seats and Delete on a test licence, Admins → change role / Remove on a te
     once the AWS Terraform provider supports passkey MFA (#50110), real code signing (SignPath or a
     paid certificate), and the beta group (`docs/BETA.md`).
 
-## 0.2.3 (built, not yet published): Tier 2's "safe" remembered per file
+## 0.2.3 (published 2026-11-13, installed here): Tier 2's "safe" remembered per file
 - When Tier 2 answers BENIGN, the agent remembers that exact file (path + size + modification time,
   the fingerprint triage already takes) for 7 days: the next run is "cleared" with no cloud request.
 - Never for interpreters (bash, python, node, perl, java, ...) or the ALWAYS_WATCH tools: the same
@@ -145,3 +145,5 @@ Save seats and Delete on a test licence, Admins → change role / Remove on a te
   `ProgramData\Telltale\cleared.json` (~210 KB) at most once a minute and on shutdown. Test t41.
 - Still open from the same discussion: trust Git for Windows / PSF / OpenJS signers and add the
   interpreters to ALWAYS_WATCH (step 1); shared reputation across users (step 3, needs a privacy change).
+- Measured (same 2.5-min test): git 32 -> 0 cloud requests, total >=100 -> 45, agent CPU avg 0.43% -> 0.22%, RAM 64.5 -> 59.4 MB. Report data + before/after chart: report_data/2026-11-13/ (git-ignored; refresh with tools/export_report_data.py).
+- Only admin-only folders (Program Files, Windows) are remembered; short-lived programs (exit before triage) included.
