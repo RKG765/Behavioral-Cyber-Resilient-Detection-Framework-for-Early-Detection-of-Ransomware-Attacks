@@ -30,7 +30,7 @@ Create Token → Custom → permission *Account · Account Analytics · Read* (y
 in `infra/aws/secrets.tfvars` as `cf_analytics_token = "..."`, then
 `AWS_PROFILE=haltline terraform apply -var-file=secrets.tfvars` in `infra/aws`.
 
-## 0.2.2 (in progress): tray icon and "What Haltline sends"
+## 0.2.2 (published 2026-11-13, installed on this PC): tray icon and "What Haltline sends"
 - **Tray icon** (helper, pywin32): shield while protecting, warning when stopped. Menu: *What Haltline
   sends*, *Privacy notice*, *Stop Haltline* / *Start Haltline* (UAC: admin only, so ransomware
   running as the user can't), *Close this icon* (only when stopped). One copy per session. Start
@@ -41,7 +41,8 @@ in `infra/aws/secrets.tfvars` as `cf_analytics_token = "..."`, then
 - **Ending the task in Task Manager** brings it back within a minute: the service's failure
   actions restart it, by design. Stop it from the tray (admin).
 - Tests 39/39 (t35 now uses a temp folder: on an installed PC `ProgramData\Telltale` is locked to
-  SYSTEM). Then: build, install over 0.2.1, try the tray, publish `v0.2.2`.
+  SYSTEM). Built (SHA-256 d62d7659...370a), installed here, published as the `v0.2.2` pre-release.
+- Open: merge PR #1 (prod -> main); Cloudflare analytics token; Access 24h; live dashboard check.
 
 ## What changed (for reference)
 1. **Licence CRUD** (Lambda + console): list and create already existed; now **Save seats** (never
