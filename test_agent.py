@@ -45,8 +45,10 @@ class FakeEngine:
 
 
 class FakeExtractor:
-    def __init__(self, empty=False, simulated=False):
-        self.empty, self.is_simulated = empty, simulated
+    def __init__(self, empty=False, simulated=False, image=None):
+        self.empty, self.is_simulated, self.image = empty, simulated, image
+    def creation_image(self, pid):
+        return self.image
     def get_sequence(self, pid):
         if self.empty:
             return np.zeros((1, 50), dtype=np.int64)
@@ -67,7 +69,8 @@ def test(fn):
     return fn
 
 
-def reset_agent_state(extractor=None, engine=None, score=0.0, window=30):
+def reset_agent_state(extractor=None, engine=None, score=0.0, window=30, max_watch=None,
+                      mode="enforce"):
     agent.VERIFIED_PATH_CACHE.clear()
     agent.grey_zone_queue.clear()
     agent.sequence_extractor = extractor or FakeExtractor()
@@ -76,7 +79,27 @@ def reset_agent_state(extractor=None, engine=None, score=0.0, window=30):
     agent.SELF_PIDS.clear()
     agent.behavior_monitor = agent.BehaviorMonitor()
     agent.MONITOR_WINDOW = window
+    agent.MAX_WATCH = window if max_watch is None else max_watch
+    agent.EXIT_SETTLE = 0.2
     agent.MAX_MONITORED = 256
+    agent.AGENT_MODE = mode
+    agent.CLOUD_API_URL = "http://127.0.0.1:9/score"     # never reach a live Tier-2 from tests
+    agent.cloud_client = None
+
+
+class LogCapture(logging.Handler):
+    """Collects agent log messages so tests can assert on verdicts."""
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.msgs = []
+    def emit(self, record):
+        self.msgs.append(record.getMessage())
+    def __enter__(self):
+        agent.logger.addHandler(self); return self
+    def __exit__(self, *a):
+        agent.logger.removeHandler(self)
+    def has(self, text):
+        return any(text in m for m in self.msgs)
 
 
 # ───────────────────────── tests ─────────────────────────
@@ -180,14 +203,14 @@ def t05_masquerade_not_safelisted_by_name():
 
 
 @test
-def t06_real_system_binary_skipped_by_path():
-    """cmd.exe from real System32 is skipped (path + name)"""
+def t06_signed_shell_is_monitored():
+    """(#31) Microsoft-signed cmd.exe in System32 is behavior-monitored, not trusted"""
     reset_agent_state()
     p = subprocess.Popen([os.path.join(os.environ["SystemRoot"], "System32", "cmd.exe"),
                           "/c", "ping -n 20 127.0.0.1 >nul"])
     SPAWNED.append(p); time.sleep(0.3)
     agent.handle_new_process(p.pid, "cmd.exe")
-    assert p.pid not in agent.behavior_monitor.watched()
+    assert p.pid in agent.behavior_monitor.watched()
     assert psutil.Process(p.pid).status() != psutil.STATUS_STOPPED
     p.kill()
 
@@ -344,7 +367,7 @@ def t16_custom_whitelist_db():
 def t17_real_onnx_model_probability():
     """ONNX model returns probability in [0,1] on random sequences"""
     eng = agent.InferenceEngine(agent.ONNX_MODEL_PATH)
-    ex = agent.SequenceExtractor()
+    ex = agent.BehavioralExtractor()
     scores = [eng.predict(ex.get_sequence(1)) for _ in range(50)]
     log(f"50 scores: min={min(scores):.4f} max={max(scores):.4f}")
     assert all(0.0 <= s <= 1.0 for s in scores)
@@ -360,6 +383,638 @@ def t18_lru_thread_safety_and_memory_bound():
     ts = [threading.Thread(target=work, args=(b,)) for b in range(8)]
     [t.start() for t in ts]; [t.join() for t in ts]
     assert len(c) == 1000
+
+
+@test
+def t19_rust_sensor_end_to_end():
+    """Sysmon XML -> Rust edr_sensor features -> ONNX score (skipped if not built)"""
+    if agent.edr_sensor is None:
+        log("edr_sensor not installed -- skipped"); return
+    s = agent.edr_sensor.Sensor()
+    def xml(eid, ms, extra=""):
+        return (f"<Event><System><EventID>{eid}</EventID>"
+                f"<TimeCreated SystemTime='2026-10-18T10:00:00.{ms:03d}0000Z'/></System><EventData>"
+                f"<Data Name='ProcessGuid'>{{T19}}</Data><Data Name='ProcessId'>4242</Data>{extra}"
+                f"</EventData></Event>")
+    assert s.ingest_xml(xml(1, 0, "<Data Name='Image'>C:\\Users\\x\\AppData\\Local\\Temp\\a.exe</Data>"))
+    assert s.ingest_xml(xml(11, 10, "<Data Name='TargetFilename'>C:\\Temp\\b.exe</Data>"))
+    assert s.features(4242) is None                     # < 3 events: never scored (#22)
+    assert s.ingest_xml(xml(3, 20, "<Data Name='DestinationIp'>8.8.8.8</Data>"))
+    v = np.asarray(s.features(4242), dtype=np.float32).reshape(1, -1)
+    assert v.shape == (1, agent.FEATURE_DIM)
+    names = agent.edr_sensor.feature_names()
+    assert v[0, names.index("is_executing_from_temp")] == 1.0
+    assert v[0, names.index("net_frac_external")] == 1.0
+    p = agent.InferenceEngine(agent.ONNX_MODEL_PATH).predict(v)
+    log(f"live-path score={p:.4f}")
+    assert 0.0 <= p <= 1.0
+    s.forget(4242)
+    assert s.event_count(4242) == 0
+
+
+def _exit_and_settle(p):
+    """Kill the spawned process, then tick through exit detection + settle."""
+    p.kill(); p.wait()
+    agent.behavior_monitor.tick()                 # notices the exit
+    time.sleep(0.3)
+    agent.behavior_monitor.tick()                 # final verdict after EXIT_SETTLE
+
+
+@test
+def t20_exited_threat_gets_post_mortem_alert():
+    """(#28) process exits mid-window with threat behavior -> CRITICAL post-mortem alert"""
+    reset_agent_state(extractor=FakeExtractor(empty=True), score=0.97)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "quick.exe", "C:\\quick.exe")
+    agent.behavior_monitor.tick()                 # no data yet -> nothing scored
+    agent.sequence_extractor = FakeExtractor()    # late Sysmon events arrive
+    with LogCapture() as cap:
+        _exit_and_settle(p)
+    assert cap.has("[POST-MORTEM THREAT]") and "quick.exe" in " ".join(cap.msgs)
+    assert p.pid not in agent.behavior_monitor.watched()
+
+
+@test
+def t21_exited_grey_is_escalated_not_dropped():
+    """(#28) short-lived grey-zone process still reaches Tier-2; offline -> logged, never queued for a kill"""
+    reset_agent_state(score=0.5)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "brief.exe", "C:\\brief.exe")
+    agent.behavior_monitor.tick()
+    assert not agent.grey_zone_queue              # still inside its 30s window
+    with LogCapture() as cap:
+        _exit_and_settle(p)
+    assert cap.has("exited, escalated to Cloud")
+    assert cap.has("(exited) -- no Tier-2 verdict")
+    assert not agent.grey_zone_queue              # its PID may be reused: no timeout kill
+    assert p.pid not in agent.behavior_monitor.watched()
+
+
+@test
+def t22_dormant_process_watch_extended():
+    """(#27) no behavior by window end -> keep watching; scored once it acts"""
+    ex = FakeExtractor(empty=True)
+    reset_agent_state(extractor=ex, score=0.02, window=0.2, max_watch=30)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "sleepy.exe", "C:\\sleepy.exe")
+    time.sleep(0.3)
+    with LogCapture() as cap:
+        agent.behavior_monitor.tick()
+    assert cap.has("[DORMANT]") and p.pid in agent.behavior_monitor.watched()
+    ex.empty = False                              # wakes up and does something
+    with LogCapture() as cap:
+        agent.behavior_monitor.tick()
+    assert cap.has("[BENIGN]") and p.pid not in agent.behavior_monitor.watched()
+    p.kill()
+
+
+@test
+def t23_full_window_finalized_early():
+    """(#29) once the 50-event window is full the verdict is final before 30s"""
+    class FullExtractor(FakeExtractor):
+        def is_complete(self, pid): return True
+    reset_agent_state(extractor=FullExtractor(), score=0.5, window=30)
+    p = spawn()
+    agent.behavior_monitor.register(p.pid, "busy.exe", "C:\\busy.exe")
+    agent.behavior_monitor.tick()
+    assert p.pid not in agent.behavior_monitor.watched()
+    assert len(agent.grey_zone_queue) == 1 and p.poll() is None
+    p.kill()
+
+
+@test
+def t24_alert_mode_never_kills():
+    """(#30) default alert mode: threat is logged CRITICAL, process survives"""
+    reset_agent_state(score=0.99, mode="alert")
+    assert not agent.actions_enforced()
+    p = spawn(); agent.behavior_monitor.register(p.pid, "x.exe", "C:\\x.exe")
+    with LogCapture() as cap:
+        agent.behavior_monitor.tick()
+    time.sleep(0.3)
+    assert p.poll() is None and cap.has("[ALERT] THREAT")
+    p.kill()
+
+
+@test
+def t25_default_mode_is_alert():
+    """(#30) a fresh agent with no EDR_MODE set does not enforce"""
+    env = {k: v for k, v in os.environ.items() if k != "EDR_MODE"}
+    out = subprocess.run([sys.executable, "-c", "import agent; print(agent.AGENT_MODE)"],
+                         cwd=HERE, env=env, capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip().splitlines()[-1] == "alert", out.stdout + out.stderr
+
+
+def _dead_pid():
+    """PID of a process that has already exited (a 'ghost' by the time triage runs)."""
+    p = subprocess.Popen([os.path.join(os.environ["SystemRoot"], "System32", "PING.EXE"), "-n", "1", "127.0.0.1"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p.wait()
+    return p.pid
+
+
+def _settle_ghosts():
+    time.sleep(0.3)
+    agent.behavior_monitor.tick()
+
+
+@test
+def t26_ghost_threat_gets_post_mortem_alert():
+    """(#32) process exits before triage, threat behavior in Sysmon data -> post-mortem alert"""
+    d = tempfile.mkdtemp()
+    fake = os.path.join(d, "dropper.exe")
+    with open(fake, "wb") as f:
+        f.write(b"MZ not a real program")                    # unsigned -> UNKNOWN
+    reset_agent_state(extractor=FakeExtractor(image=fake), score=0.97)
+    pid = _dead_pid()
+    with LogCapture() as cap:
+        agent.handle_new_process(pid, "dropper.exe")
+        assert pid in agent.behavior_monitor.watched()
+        _settle_ghosts()
+    assert cap.has("[POST-MORTEM THREAT]") and cap.has("dropper.exe")
+    assert pid not in agent.behavior_monitor.watched()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+@test
+def t27_ghost_trusted_binary_not_scored():
+    """(#32) ghost of a Microsoft-signed, non-abusable binary is triaged as trusted, not scored"""
+    ping = os.path.join(os.environ["SystemRoot"], "System32", "PING.EXE")
+    reset_agent_state(extractor=FakeExtractor(image=ping), score=0.97)
+    pid = _dead_pid()
+    with LogCapture() as cap:
+        agent.handle_new_process(pid, "PING.EXE")
+        _settle_ghosts()
+    assert not cap.has("[SCORE]") and not cap.has("THREAT")
+    assert pid not in agent.behavior_monitor.watched()
+
+
+@test
+def t28_ghost_with_reused_pid_not_judged():
+    """(#32) Sysmon image no longer matches the WMI name (PID reused) -> no verdict"""
+    reset_agent_state(extractor=FakeExtractor(image=r"C:\Other\newproc.exe"), score=0.97)
+    pid = _dead_pid()
+    with LogCapture() as cap:
+        agent.handle_new_process(pid, "oldproc.exe")
+        _settle_ghosts()
+    assert not cap.has("[SCORE]") and cap.has("no longer matches")
+
+
+@test
+def t29_ghost_ignored_on_simulated_data():
+    """(#32) without real Sysmon data a ghost is only logged, never judged"""
+    reset_agent_state(extractor=FakeExtractor(simulated=True, image=r"C:\x.exe"), score=0.97)
+    pid = _dead_pid()
+    agent.handle_new_process(pid, "x.exe")
+    assert pid not in agent.behavior_monitor.watched()
+
+
+class _Reply:
+    def __init__(self, body, sig=b"", status=200):
+        import base64
+        self.status_code, self.content, self.text = status, body, body.decode()
+        self.headers = {"x-tt-resp-sig": base64.b64encode(sig).decode()}
+    def json(self):
+        import json
+        return json.loads(self.content)
+
+
+@test
+def t30_cloud_client_signs_verifies_and_fails_over():
+    """(#33) signed requests, only server-signed replies accepted, primary -> fallback failover"""
+    import base64, hashlib, json
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
+
+    dev = ec.generate_private_key(ec.SECP256R1())
+    class FakeKey:   # same contract as edr_sensor.DeviceKey: raw r||s over SHA-256
+        kind = "software"
+        def public_key(self):
+            return dev.public_key().public_bytes(serialization.Encoding.X962,
+                                                 serialization.PublicFormat.UncompressedPoint)
+        def sign(self, data):
+            r, s = utils.decode_dss_signature(dev.sign(data, ec.ECDSA(hashes.SHA256())))
+            return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    server = ed25519.Ed25519PrivateKey.generate()
+    pub = base64.b64encode(server.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+
+    calls = []
+    def fake_post(url, data, headers, timeout, **kw):
+        calls.append(url)
+        if url.startswith("https://primary"):
+            raise agent.requests.exceptions.ConnectionError("down")
+        msg = "\n".join(("TT1", "POST", "/v1/score", headers["x-tt-device"], headers["x-tt-time"],
+                         headers["x-tt-nonce"], hashlib.sha256(data).hexdigest())).encode()
+        assert headers["x-amz-content-sha256"] == hashlib.sha256(data).hexdigest()   # CloudFront OAC
+        sig = base64.b64decode(headers["x-tt-sig"])   # verify like the Worker / Lambda do
+        dev.public_key().verify(utils.encode_dss_signature(int.from_bytes(sig[:32], "big"),
+                                int.from_bytes(sig[32:], "big")), msg, ec.ECDSA(hashes.SHA256()))
+        body = json.dumps({"verdict": "KILL", "nonce": headers["x-tt-nonce"]}).encode()
+        return _Reply(body, server.sign(body))
+
+    orig = agent.requests.post
+    agent.requests.post = fake_post
+    try:
+        c = agent.CloudClient(["https://primary", "https://fallback"], "LIC", pub, FakeKey())
+        c.registered = True
+        assert c.score([0.0] * 99)["verdict"] == "KILL"
+        assert calls == ["https://primary/v1/score", "https://fallback/v1/score"], calls
+        c.score([0.0] * 99)
+        assert calls[-1] == "https://fallback/v1/score" and len(calls) == 3, "fallback first while primary is down"
+
+        forged = ed25519.Ed25519PrivateKey.generate()
+        def forged_post(url, data, headers, timeout, **kw):
+            body = json.dumps({"verdict": "BENIGN", "nonce": headers["x-tt-nonce"]}).encode()
+            return _Reply(body, forged.sign(body))
+        agent.requests.post = forged_post
+        try:
+            c.score([0.0] * 99)
+            raise AssertionError("forged reply was accepted")
+        except agent.CloudError:
+            pass
+    finally:
+        agent.requests.post = orig
+
+
+@test
+def t31_device_key_signature_verifies():
+    """(#33) edr_sensor.DeviceKey (TPM or software) signs in the format the servers verify"""
+    if not hasattr(agent.edr_sensor, "DeviceKey"):
+        log("edr_sensor.DeviceKey not built -- skipped"); return
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+    k = agent.edr_sensor.DeviceKey("TelltaleTestKeyAgent", machine=False)
+    try:
+        pk, sig = k.public_key(), k.sign(b"TT1 test")
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), pk).verify(
+            utils.encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big")),
+            b"TT1 test", ec.ECDSA(hashes.SHA256()))
+        log(f"device key kind={k.kind}")
+    finally:
+        k.delete()
+
+
+def _ask_dirs():
+    """Point the agent and the helper at a fresh, private IPC folder."""
+    import telltale_helper as h
+    d = tempfile.mkdtemp(prefix="tt_ipc_")
+    agent.ALERTS_DIR = h.ALERTS_DIR = os.path.join(d, "alerts")
+    agent.DECISIONS_DIR = h.DECISIONS_DIR = os.path.join(d, "decisions")
+    agent.REPORTS_OUTBOX = os.path.join(d, "reports_outbox.jsonl")
+    return h
+
+
+@test
+def t32_ask_mode_waits_for_user_then_closes():
+    """(#34) ask mode never closes on its own; Report keeps the alert open; Close closes the app"""
+    import json
+    reset_agent_state(mode="ask")
+    h = _ask_dirs()
+    p = spawn()
+    proc = psutil.Process(p.pid)
+    with open(agent.FEATURE_META_PATH, encoding="utf-8") as f:
+        names = json.load(f)["features"]
+    vec = np.zeros(99, dtype=np.float32)
+    vec[names.index("has_double_extension")] = 1
+    agent._enforce_kill(proc, p.pid, "PING.EXE", proc.exe(), "score=0.97", vec)
+    time.sleep(0.3)
+    assert p.poll() is None, "ask mode must not close the app on its own"
+    alerts = h.due_alerts({}, time.time())
+    assert len(alerts) == 1 and any("double extension" in r for r in alerts[0]["reasons"]), alerts
+
+    h.decide(alerts[0]["id"], "report")
+    agent.DecisionWatcher().check()
+    assert os.path.exists(agent.REPORTS_OUTBOX) and p.poll() is None, "report must not close the app"
+    assert h.due_alerts({}, time.time()), "alert stays open after a report"
+
+    h.decide(alerts[0]["id"], "close")
+    agent.DecisionWatcher().check()
+    p.wait(timeout=5)
+    assert not h.due_alerts({}, time.time())
+
+
+@test
+def t33_ask_mode_run_anyway_and_forged_decisions():
+    """(#34) Run keeps the app; forged ids, unknown choices and a reused PID close nothing"""
+    import json
+    reset_agent_state(mode="ask")
+    h = _ask_dirs()
+    p = spawn()
+    proc = psutil.Process(p.pid)
+    agent._enforce_kill(proc, p.pid, "PING.EXE", proc.exe(), "score=0.95")
+    a = h.due_alerts({}, time.time())[0]
+    assert a["reasons"] == [], "no features -> no invented reasons"
+    assert not h.due_alerts({a["id"]: time.time()}, time.time()), "dismissed alert waits REMIND_S"
+
+    h.decide("f" * 32, "close")          # no such alert
+    h.decide(a["id"], "explode")         # unknown choice
+    agent.DecisionWatcher().check()
+    assert p.poll() is None
+
+    alert_path = os.path.join(agent.ALERTS_DIR, a["id"] + ".json")
+    with open(alert_path, encoding="utf-8") as f:
+        stale = json.load(f)
+    stale["created"] += 100              # as if the PID now belonged to another process
+    with open(alert_path, "w", encoding="utf-8") as f:
+        json.dump(stale, f)
+    h.decide(a["id"], "close")
+    agent.DecisionWatcher().check()
+    assert p.poll() is None, "a reused PID must never be closed"
+
+    agent._enforce_kill(proc, p.pid, "PING.EXE", proc.exe(), "score=0.95")
+    b = h.due_alerts({}, time.time())[0]
+    h.decide(b["id"], "run")
+    agent.DecisionWatcher().check()
+    assert p.poll() is None and not h.due_alerts({}, time.time())
+
+
+@test
+def t34_reports_upload_or_wait_in_outbox():
+    """(#34) Send report uploads via the cloud client; offline reports wait and go with the next one"""
+    import json
+    reset_agent_state(mode="ask")
+    _ask_dirs()
+    alert = {"name": "x.exe", "path": "", "reason": "score=0.97", "reasons": ["Ran an encoded (base64) command"]}
+
+    assert agent.send_report(alert) is False, "no cloud client configured -> kept"
+    class Cloud:
+        def __init__(self, fail): self.fail, self.sent = fail, []
+        def report(self, body):
+            if self.fail: raise agent.CloudUnavailable("offline")
+            self.sent.append(body)
+    agent.cloud_client = Cloud(fail=True)
+    assert agent.send_report(alert) is False
+    with open(agent.REPORTS_OUTBOX, encoding="utf-8") as f:
+        assert len(f.readlines()) == 2, "both reports wait in the outbox"
+
+    agent.cloud_client = Cloud(fail=False)
+    assert agent.send_report(alert) is True
+    assert len(agent.cloud_client.sent) == 3 and agent.cloud_client.sent[0]["reasons"] == alert["reasons"]
+    with open(agent.REPORTS_OUTBOX, encoding="utf-8") as f:
+        assert f.read() == "", "outbox empty once everything is sent"
+    agent.cloud_client = None
+
+
+@test
+def t35_signed_update_needs_release_key_newer_version_and_matching_hash():
+    """(#36) only a manifest signed by the release key, newer, with a matching installer hash runs"""
+    import base64, hashlib, json, subprocess
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    rel = ed25519.Ed25519PrivateKey.generate()
+    pub = base64.b64encode(rel.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    installer = b"MZ fake installer"
+    def manifest(version, sha=hashlib.sha256(installer).hexdigest(), url="https://dl.example/setup.exe"):
+        raw = json.dumps({"version": version, "installer": url, "sha256": sha}).encode()
+        return raw, base64.b64encode(rel.sign(raw)).decode()
+
+    raw, sig = manifest("9.0.0")
+    assert agent.verify_update(raw, sig, pub)["version"] == "9.0.0"
+    assert agent.verify_update(raw.replace(b"9.0.0", b"9.0.1"), sig, pub) is None, "edited manifest"
+    other = ed25519.Ed25519PrivateKey.generate()
+    assert agent.verify_update(raw, base64.b64encode(other.sign(raw)).decode(), pub) is None, "wrong key"
+    assert agent.verify_update(*manifest(agent.AGENT_VERSION), pub) is None, "not newer"
+    assert agent.verify_update(*manifest("9.0.0", url="http://dl.example/setup.exe"), pub) is None, "plain http"
+
+    served, ran = {}, []
+    class R:
+        def __init__(self, b): self.content, self.text = b, b.decode(errors="replace")
+    import shutil, tempfile
+    orig = (agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY, agent.IPC_DIR)
+    agent.IPC_DIR = tempfile.mkdtemp()   # not the real ProgramData\Telltale (locked to SYSTEM on an installed PC)
+    agent.requests.get = lambda url, timeout: R(served[url])
+    subprocess.Popen = lambda args, **kw: ran.append(args)
+    agent.UPDATE_URL, agent.UPDATE_PUBKEY = "https://u.example/latest.json", pub
+    try:
+        raw, sig = manifest("9.0.0", sha="0" * 64)   # signed, but the download doesn't match
+        served.update({agent.UPDATE_URL: raw, agent.UPDATE_URL + ".sig": sig.encode(), "https://dl.example/setup.exe": installer})
+        assert agent.UpdateChecker().check() is None and ran == [], "hash mismatch must not run"
+        raw, sig = manifest("9.0.0")
+        served.update({agent.UPDATE_URL: raw, agent.UPDATE_URL + ".sig": sig.encode()})
+        path = agent.UpdateChecker().check()
+        assert ran and ran[0][0] == path and "/VERYSILENT" in ran[0], ran
+        with open(path, "rb") as f:
+            assert f.read() == installer
+        os.remove(path)
+    finally:
+        shutil.rmtree(agent.IPC_DIR, ignore_errors=True)
+        agent.requests.get, subprocess.Popen, agent.UPDATE_URL, agent.UPDATE_PUBKEY, agent.IPC_DIR = orig
+
+
+@test
+def t36_release_build_settings_and_pinned_roots():
+    """(#35) edr_sensor carries release settings (empty in dev builds); the pinned roots ship with the build"""
+    if not hasattr(agent.edr_sensor, "release_config"):
+        log("edr_sensor without release_config (old build) -- skipped"); return
+    cfg = agent.edr_sensor.release_config()
+    assert set(cfg) == {"endpoints", "server_pubkey", "update_url", "update_pubkey"}, cfg
+    pem = os.path.join(os.path.dirname(os.path.abspath(agent.__file__)), "packaging", "pinned_roots.pem")
+    with open(pem, encoding="utf-8") as f:
+        assert f.read().count("BEGIN CERTIFICATE") == 13
+
+
+@test
+def t37_licence_comes_from_a_protected_file():
+    """(#35) read_secret returns the stripped file contents, or "" when the file is missing"""
+    import tempfile
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "licence.key")
+    assert agent.read_secret(p) == "", "missing file -> empty"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("  HL-ABCDE-12345-FGHJK-67890\r\n")
+    assert agent.read_secret(p) == "HL-ABCDE-12345-FGHJK-67890"
+    os.remove(p); os.rmdir(d)
+
+
+@test
+def t38_signed_licence_refusal_stops_agent_unsigned_does_not():
+    """Deleted/revoked licence: only a server-signed, fresh refusal stops protection and tells the user"""
+    import base64, json, shutil, tempfile
+    import telltale_helper as h
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    class FakeKey:   # the fake server below doesn't check device signatures (t30 does)
+        kind = "software"
+        def public_key(self): return b"\x04" + b"\x01" * 64
+        def sign(self, data): return b"\x00" * 64
+    server, forged = ed25519.Ed25519PrivateKey.generate(), ed25519.Ed25519PrivateKey.generate()
+    pub = base64.b64encode(server.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    tmp = tempfile.mkdtemp()
+    old = (agent.requests.post, agent.ALERTS_DIR, h.ALERTS_DIR)
+    agent.ALERTS_DIR = h.ALERTS_DIR = tmp
+    status = os.path.join(tmp, agent.LICENCE_STATUS)
+    try:
+        c = agent.CloudClient(["https://primary"], "LIC", pub, FakeKey())
+        c.registered = True
+        def reply(make):
+            agent.requests.post = lambda url, data, headers, timeout, **kw: make(headers["x-tt-nonce"])
+        signed = lambda key, body: (lambda nonce: _Reply(json.dumps({**body, "nonce": nonce}).encode(),
+                                                         key.sign(json.dumps({**body, "nonce": nonce}).encode())))
+
+        for label, make in (("unsigned 403", lambda n: _Reply(b'{"error":"revoked"}', b"", 403)),
+                            ("forged", signed(forged, {"licence": "revoked"}))):
+            reply(make)
+            try:
+                c.score([0.0] * 99)
+                raise AssertionError(f"{label} reply was accepted")
+            except agent.CloudError as e:
+                assert not isinstance(e, agent.LicenceRevoked), label
+            assert not agent.STOP.is_set() and not os.path.exists(status), f"{label} must not stop the agent"
+
+        reply(signed(server, {"licence": "revoked"}))
+        try:
+            c.score([0.0] * 99)
+            raise AssertionError("signed revocation was ignored")
+        except agent.LicenceRevoked:
+            pass
+        assert agent.STOP.is_set(), "a signed revocation stops protection"
+        reason, ts = h.licence_notice(None)
+        assert reason == "revoked" and h.licence_notice(ts) is None, "the helper shows it once"
+
+        agent.STOP.clear()
+        reply(signed(server, {"device_id": c.device_id}))   # licence restored: a normal registration
+        c.register()
+        assert not os.path.exists(status), "a valid registration clears the notice"
+    finally:
+        agent.requests.post, agent.ALERTS_DIR, h.ALERTS_DIR = old
+        agent.STOP.clear()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@test
+def t39_sent_log_shows_what_left_the_pc_with_the_key_hidden():
+    """'What Haltline sends': every cloud request is kept for the user (last 100), licence key hidden"""
+    import json, shutil, tempfile
+    import telltale_helper as h
+    tmp = tempfile.mkdtemp()
+    old = (agent.ALERTS_DIR, h.ALERTS_DIR)
+    agent.ALERTS_DIR = h.ALERTS_DIR = tmp
+    try:
+        agent.record_sent("/v1/register", {"licence_key": "HL-ABCDE-12345-FGHJK-67890", "public_key": "B" * 88,
+                                           "key_kind": "tpm"}, "accepted")
+        names = agent.feature_names()
+        agent.record_sent("/v1/score", {"features": [0.5] * len(names)}, "BENIGN")
+        raw = open(os.path.join(tmp, agent.SENT_LOG), encoding="utf-8").read()
+        assert "67890" not in raw and "FGHJK" not in raw, "the licence key never reaches the user-readable log"
+        newest, first = h.read_sent()
+        assert newest["path"] == "/v1/score" and newest["result"] == "BENIGN"
+        assert newest["sent"]["features"][names[0]] == 0.5 and len(newest["sent"]["features"]) == len(names)
+        assert first["sent"]["licence_key"].startswith("HL-") and first["sent"]["key_kind"] == "tpm"
+        for i in range(agent.SENT_KEEP + 5):
+            agent.record_sent("/v1/score", {"features": []}, str(i))
+        kept = h.read_sent(limit=1000)
+        assert len(kept) == agent.SENT_KEEP and kept[0]["result"] == str(agent.SENT_KEEP + 4), "only the last 100"
+        assert h.read_sent.__doc__ and h.WHAT["/v1/report"]
+        about = {"name": "evil.exe", "pid": 4242, "path": r"C:\Users\x\evil.exe"}
+        agent.record_sent("/v1/score", {"features": [0.1] * len(names)}, "KILL", about)
+        e = h.read_sent()[0]
+        assert e["about"] == about, "the window shows which program it was"
+        assert "evil.exe" not in json.dumps(e["sent"]) and "4242" not in json.dumps(e["sent"]), "...but it is not sent"
+    finally:
+        agent.ALERTS_DIR, h.ALERTS_DIR = old
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@test
+def t40_problem_report_and_theme_setting():
+    """'Report a problem' reaches send_report (capped, versioned); the theme choice is saved per user"""
+    import shutil, tempfile
+    import telltale_helper as h
+    sent = []
+    orig_send, orig_settings = agent.send_report, h.SETTINGS
+    agent.send_report = lambda r: sent.append(r) or True
+    tmp = tempfile.mkdtemp()
+    try:
+        w = agent.DecisionWatcher()
+        w.apply({"id": "problem-1", "choice": "problem", "text": "   "})
+        assert sent == [], "an empty report is dropped"
+        w.apply({"id": "problem-2", "choice": "problem", "text": "The tray icon\nvanished " + "x" * 2000})
+        r = sent[0]
+        assert r["name"] == "(problem report)" and r["reason"].startswith("The tray icon vanished")
+        assert sum(len(x) for x in r["reasons"][:-1]) == 1000 and r["reasons"][-1] == f"Haltline {agent.AGENT_VERSION}"
+        h.SETTINGS = os.path.join(tmp, "Haltline", "settings.json")
+        assert h.load_theme() == "system", "follows Windows until the user picks"
+        h.save_theme("dark")
+        assert h.load_theme() == "dark" and h.palette() is h.PALETTES["dark"]
+        h.save_theme("neon")
+        assert h.load_theme() == "system", "junk falls back to system"
+        assert h.palette("light") is h.PALETTES["light"] and h.system_theme() in ("light", "dark")
+    finally:
+        agent.send_report, h.SETTINGS = orig_send, orig_settings
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@test
+def t41_tier2_benign_is_remembered_per_file_not_for_interpreters():
+    """A file Tier 2 allowed isn't sent again (7 days, same file only); never interpreters; wiped on a threat"""
+    import shutil, tempfile
+    tmp = tempfile.mkdtemp()
+    store = os.path.join(tmp, "cleared.json")
+    tool = os.path.join(tmp, "tool.exe")
+    with open(tool, "wb") as f:
+        f.write(b"MZ not signed")
+    orig = (agent.cleared, agent.ask_tier2, agent.admin_only_path)
+    try:
+        assert not agent.admin_only_path(tool), "a temp folder is user-writable"
+        assert agent.admin_only_path(r"C:\Program Files\Git\cmd\git.exe")
+        assert agent.admin_only_path(r"C:\Windows\System32\where.exe")
+        assert not agent.ClearedCache.eligible(tool), "user-writable folders are never cleared (forgeable fingerprint)"
+        agent.admin_only_path = lambda p: True   # the rest of this test runs in a temp folder
+        # the cache itself: bounded, expires, survives a restart, corrupt file -> empty
+        c = agent.ClearedCache(store, ttl=60, cap=3)
+        for i in range(5):
+            c.add((f"p{i}", 1, 1))
+        assert len(c) == 3 and not c.allowed(("p0", 1, 1)) and c.allowed(("p4", 1, 1)), "oldest dropped"
+        c.save(force=True)
+        assert agent.ClearedCache(store, ttl=60).allowed(("p4", 1, 1)), "survives a restart"
+        assert not agent.ClearedCache(store, ttl=0).allowed(("p4", 1, 1)), "expired entries ignored"
+        with open(store, "w") as f:
+            f.write("{not json")
+        assert len(agent.ClearedCache(store)) == 0
+        assert agent.ClearedCache.eligible(tool) and not agent.ClearedCache.eligible(r"C:\x\python.exe")
+        assert not agent.ClearedCache.eligible(r"C:\Windows\System32\cmd.exe"), "ALWAYS_WATCH never cleared"
+
+        # end to end: grey zone -> Tier 2 BENIGN -> remembered -> next run skips the cloud
+        reset_agent_state(score=0.5)
+        agent.cleared = agent.ClearedCache(store)
+        asked = []
+        agent.ask_tier2 = lambda payload, about=None: asked.append(about) or {"verdict": "BENIGN"}
+        assert agent._triage(1, "tool.exe", tool)[0] == "unknown", "unknown before Tier 2 has seen it"
+        p = spawn()
+        agent.behavior_monitor.register(p.pid, "tool.exe", tool)
+        _exit_and_settle(p)
+        assert asked and agent.cleared.allowed(agent.file_fingerprint(tool)), "Tier 2's BENIGN is remembered"
+        assert agent._triage(2, "tool.exe", tool)[0] == "cleared", "second run: no cloud request"
+        with open(tool, "ab") as f:
+            f.write(b"changed")   # an update or a swap: new fingerprint, checked again
+        assert agent._triage(3, "tool.exe", tool)[0] == "unknown"
+
+        # a file changed between starting and the verdict is not remembered
+        agent.cleared.clear()
+        p = spawn()
+        agent.behavior_monitor.register(p.pid, "tool.exe", tool)
+        with open(tool, "ab") as f:
+            f.write(b"swapped")
+        _exit_and_settle(p)
+        assert len(agent.cleared) == 0, "swapped file must not inherit the verdict"
+
+        # interpreters are never remembered, even when Tier 2 allows a run
+        py = os.path.join(tmp, "python.exe")
+        shutil.copy(tool, py)
+        p = spawn()
+        agent.behavior_monitor.register(p.pid, "python.exe", py)
+        _exit_and_settle(p)
+        assert len(agent.cleared) == 0 and agent._triage(4, "python.exe", py)[0] == "unknown"
+
+        # any threat wipes every earlier "safe"
+        agent.cleared.add(agent.file_fingerprint(tool))
+        agent._enforce_kill(None, 0, "evil.exe", r"C:\evil.exe", "test")
+        assert len(agent.cleared) == 0
+    finally:
+        agent.cleared, agent.ask_tier2, agent.admin_only_path = orig
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ───────────────────────── summary ─────────────────────────

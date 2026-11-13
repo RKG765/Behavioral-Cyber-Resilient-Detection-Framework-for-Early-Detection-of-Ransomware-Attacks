@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Haltline SOC</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip" href="#view">Skip to content</a>
+  <header class="rail">
+    <div class="rail-top">
+      <a class="brand" href="#/overview"><span class="brand-tag" aria-hidden="true"></span>Haltline <span>SOC</span></a>
+      <button id="menu" class="menu" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
+    </div>
+    <nav id="nav" aria-label="Sections">
+      <p class="nav-group">Fleet</p>
+      <a href="#/overview">Overview</a>
+      <a href="#/devices">Devices</a>
+      <a href="#/ips">IPs</a>
+      <p class="nav-group">Tier 2</p>
+      <a href="#/log">Live log</a>
+      <a href="#/rejected">Rejected</a>
+      <a href="#/reports">Reports</a>
+      <p class="nav-group">Admin</p>
+      <a href="#/licences">Licences</a>
+      <a href="#/admins">Admins</a>
+      <a href="#/audit">Audit</a>
+      <p class="nav-group">Cloud</p>
+      <a href="#/aws">AWS</a>
+      <a href="#/cloudflare">Cloudflare</a>
+    </nav>
+    <div class="rail-foot">
+      <span id="who"></span>
+      <button id="logout" class="btn on-ink" type="button" hidden>Sign out</button>
+    </div>
+  </header>
+  <main id="view" tabindex="-1"></main>
+  <dialog id="ask" aria-labelledby="ask-title" aria-describedby="ask-body">
+    <form method="dialog">
+      <h2 id="ask-title"></h2>
+      <p id="ask-body"></p>
+      <p id="ask-target" class="mono"></p>
+      <div class="ask-actions">
+        <button class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="ask-ok" class="btn" value="ok"></button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 """
 web_app.py
 ==========
-Enterprise Two-Tier EDR -- Real-Time SOC Web Application
+Telltale -- Real-Time SOC Web Application
 High-performance FastAPI backend with WebSockets for real-time, zero-refresh
 endpoint telemetry, hardware monitoring, agent/server subprocess management,
 and interactive threat remediation.
@@ -67,7 +67,7 @@ CLOUD_API_URL = "http://127.0.0.1:8000"
 # -----------------------------------------------------------------------------
 app = FastAPI(
     title="EDR Real-Time SOC Command Center",
-    description="Live Two-Tier EDR telemetry, hardware monitoring, and interactive control suite",
+    description="Live Telltale telemetry, hardware monitoring, and interactive control suite",
     version="3.0.0"
 )
 
@@ -95,7 +95,7 @@ class ProcessManager:
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "action": "SYSTEM_INIT",
                 "target": "SOC Console",
-                "details": "Two-Tier EDR Command Center initialized in real-time mode",
+                "details": "Telltale Command Center initialized in real-time mode",
                 "analyst": "System"
             }
         ]
@@ -706,8 +706,10 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     print("=" * 65)
-    print("  ENTERPRISE TWO-TIER EDR -- REAL-TIME SOC COMMAND CENTER")
-    print("  Localhost: http://127.0.0.1:5050/how/")
-    print("  Network Shareable: http://10.7.35.159:5050/how/")
+    print("  TELLTALE -- REAL-TIME SOC COMMAND CENTER")
+    # The portal can start/stop the agent and has no authentication, so it
+    # listens on localhost only. Set EDR_WEB_HOST=0.0.0.0 to expose it (trusted LAN only).
+    host = os.environ.get("EDR_WEB_HOST", "127.0.0.1")
+    print(f"  Open: http://{'127.0.0.1' if host == '0.0.0.0' else host}:5050/how/")
     print("=" * 65)
-    uvicorn.run("web_app:app", host="0.0.0.0", port=5050, reload=False)
+    uvicorn.run("web_app:app", host=host, port=5050, reload=False)

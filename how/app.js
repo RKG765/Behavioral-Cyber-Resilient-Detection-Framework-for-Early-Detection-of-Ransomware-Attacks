@@ -1,4 +1,4 @@
-// how/app.js - Interactive Controller for the Two-Tier EDR Presentation Site
+// how/app.js - Interactive Controller for the Telltale Presentation Site
 
 document.addEventListener("DOMContentLoaded", () => {
   // 1. Initialize Mermaid.js

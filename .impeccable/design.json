@@ -1,0 +1,433 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-07T19:19:59+00:00",
+  "title": "Design System: Telltale SOC",
+  "extensions": {
+    "colorMeta": {
+      "manila-paper": {
+        "role": "neutral",
+        "displayName": "Manila Paper",
+        "canonical": "#ebe2c8",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "card-stock": {
+        "role": "neutral",
+        "displayName": "Card Stock",
+        "canonical": "#f8f4e6",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "card-hover": {
+        "role": "neutral",
+        "displayName": "Card Hover",
+        "canonical": "#f1ead5",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d5c9a8",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "hairline-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "#b3a588",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Ink",
+        "canonical": "#1c1b18",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "ink-quiet": {
+        "role": "neutral",
+        "displayName": "Quiet Ink",
+        "canonical": "#57503f",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "rail-ink": {
+        "role": "neutral",
+        "displayName": "Rail Ink",
+        "canonical": "#1e1d1a",
+        "tonalRamp": [
+          "#141311",
+          "#1e1d1a",
+          "#2b2925",
+          "#3a3731",
+          "#4a463e",
+          "#7d735e",
+          "#a99f8a",
+          "#ece5d4"
+        ]
+      },
+      "rail-hover": {
+        "role": "neutral",
+        "displayName": "Rail Hover",
+        "canonical": "#2b2925",
+        "tonalRamp": [
+          "#141311",
+          "#1e1d1a",
+          "#2b2925",
+          "#3a3731",
+          "#4a463e",
+          "#7d735e",
+          "#a99f8a",
+          "#ece5d4"
+        ]
+      },
+      "rail-text": {
+        "role": "neutral",
+        "displayName": "Rail Text",
+        "canonical": "#ece5d4",
+        "tonalRamp": [
+          "#141311",
+          "#1e1d1a",
+          "#2b2925",
+          "#3a3731",
+          "#4a463e",
+          "#7d735e",
+          "#a99f8a",
+          "#ece5d4"
+        ]
+      },
+      "rail-muted": {
+        "role": "neutral",
+        "displayName": "Rail Muted",
+        "canonical": "#a99f8a",
+        "tonalRamp": [
+          "#141311",
+          "#1e1d1a",
+          "#2b2925",
+          "#3a3731",
+          "#4a463e",
+          "#7d735e",
+          "#a99f8a",
+          "#ece5d4"
+        ]
+      },
+      "selection-straw": {
+        "role": "neutral",
+        "displayName": "Selection Straw",
+        "canonical": "#f3d58a",
+        "tonalRamp": [
+          "#3d2f08",
+          "#5e4910",
+          "#8a6c1a",
+          "#b8922a",
+          "#d9b450",
+          "#f3d58a",
+          "#f8e6b8",
+          "#fcf4de"
+        ]
+      },
+      "triage-revoked": {
+        "role": "tertiary",
+        "displayName": "Revoked Black",
+        "canonical": "#1c1b18",
+        "tonalRamp": [
+          "#1c1b18",
+          "#3a3731",
+          "#57503f",
+          "#7d735e",
+          "#b3a588",
+          "#d5c9a8",
+          "#ebe2c8",
+          "#f8f4e6"
+        ]
+      },
+      "triage-failed": {
+        "role": "tertiary",
+        "displayName": "Signal Red",
+        "canonical": "#b42318",
+        "tonalRamp": [
+          "#3d0b07",
+          "#5f120c",
+          "#8f1c13",
+          "#b42318",
+          "#d1503f",
+          "#e88a7d",
+          "#f4c3bb",
+          "#fbe9e6"
+        ]
+      },
+      "triage-lower-trust": {
+        "role": "tertiary",
+        "displayName": "Tag Amber",
+        "canonical": "#e8a317",
+        "tonalRamp": [
+          "#3f2b04",
+          "#6a4807",
+          "#9a6a0c",
+          "#c88a12",
+          "#e8a317",
+          "#f0c25e",
+          "#f6dca3",
+          "#fbf0d8"
+        ]
+      },
+      "triage-verified": {
+        "role": "tertiary",
+        "displayName": "Ledger Green",
+        "canonical": "#276a31",
+        "tonalRamp": [
+          "#0c2410",
+          "#143a19",
+          "#1e5226",
+          "#276a31",
+          "#3f8a4a",
+          "#72ad7a",
+          "#b0d3b4",
+          "#e3f0e4"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page title, one per view."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Triage band counts on Overview."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section headings; dialog title at 1.25rem."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text and ledes; tables at 0.875rem."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase triage tag word, chip, rail group names."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Device IDs, IPs, hashes, paths only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "float",
+        "value": "0 10px 28px rgb(28 27 24 / 0.22), 0 2px 6px rgb(28 27 24 / 0.12)",
+        "purpose": "Modal dialog and toast only; in-page surfaces are flat."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-change",
+        "value": "150ms ease-out",
+        "purpose": "Background, colour and border transitions on buttons, nav links and rows. Off under prefers-reduced-motion."
+      },
+      {
+        "name": "skeleton-pulse",
+        "value": "1.4s ease-in-out infinite",
+        "purpose": "Loading skeleton opacity pulse. Off under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "760px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Triage Tag",
+      "kind": "custom",
+      "refersTo": "triage-tag",
+      "description": "Four-band trust strip with the current band filled, plus its word. Means trust only.",
+      "html": "<span class=\"ds-tag ds-l3\"><span class=\"ds-bands\" aria-hidden=\"true\"><i></i><i></i><i></i><i class=\"ds-on ds-b3\"></i></span>Verified</span><span class=\"ds-tag ds-l1\"><span class=\"ds-bands\" aria-hidden=\"true\"><i></i><i class=\"ds-on ds-b1\"></i><i></i><i></i></span>Failed</span><span class=\"ds-tag\"><span class=\"ds-bands\" aria-hidden=\"true\"><i></i><i></i><i class=\"ds-on ds-b2\"></i><i></i></span>Lower trust</span>",
+      "css": ".ds-tag { display: inline-flex; align-items: center; gap: 7px; margin-right: 16px; font: 600 0.75rem/1 var(--sans, system-ui, sans-serif); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink, #1c1b18); } .ds-bands { display: inline-grid; grid-template-columns: repeat(4, 5px); gap: 1px; } .ds-bands i { height: 13px; border: 1px solid var(--rule-strong, #b3a588); } .ds-bands i.ds-on { border-color: transparent; } .ds-b1 { background: var(--t1, #b42318); } .ds-b2 { background: var(--t2, #e8a317); } .ds-b3 { background: var(--t3, #276a31); } .ds-l1 { color: var(--t1, #b42318); } .ds-l3 { color: var(--t3, #276a31); }"
+    },
+    {
+      "name": "Triage Board Band",
+      "kind": "custom",
+      "refersTo": "triage-board",
+      "description": "One Overview row: filled name tab, count, share-of-fleet bar, link.",
+      "html": "<div class=\"ds-band\"><span class=\"ds-band-name\">Lower trust</span><span class=\"ds-band-count\">3</span><span class=\"ds-share\"><span class=\"ds-bar\"><b></b></span>21% of fleet</span><a href=\"#\">Show 3 devices</a></div>",
+      "css": ".ds-band { display: grid; grid-template-columns: 10.5rem 4rem minmax(0, 1fr) auto; align-items: center; gap: 0 20px; min-height: 3.75rem; padding-right: 16px; background: var(--card, #f8f4e6); border: 1px solid var(--rule-strong, #b3a588); border-radius: 3px; overflow: hidden; color: var(--ink, #1c1b18); font-family: var(--sans, system-ui, sans-serif); } .ds-band-name { align-self: stretch; display: flex; align-items: center; padding: 0 16px; background: var(--t2, #e8a317); color: var(--ink, #1c1b18); font: 600 0.875rem/1.1 var(--sans, system-ui, sans-serif); letter-spacing: 0.06em; text-transform: uppercase; } .ds-band-count { font: 700 2.5rem/1 var(--sans, system-ui, sans-serif); font-variant-numeric: tabular-nums; text-align: right; } .ds-share { display: flex; align-items: center; gap: 12px; font-size: 0.8125rem; color: var(--ink-2, #57503f); font-variant-numeric: tabular-nums; } .ds-bar { flex: 1; height: 8px; background: var(--paper, #ebe2c8); border: 1px solid var(--rule, #d5c9a8); border-radius: 1px; } .ds-bar b { display: block; height: 100%; width: 21%; background: var(--t2, #e8a317); } .ds-band a { color: inherit; font-size: 0.875rem; font-weight: 600; text-underline-offset: 3px; } .ds-band a:focus-visible { outline: 2px solid var(--ink, #1c1b18); outline-offset: 2px; }"
+    },
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default action on card stock.",
+      "html": "<button class=\"ds-btn\">Mark seen</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; min-height: 2rem; padding: 0 12px; border: 1px solid var(--rule-strong, #b3a588); border-radius: 3px; font: 600 0.875rem/1 var(--sans, system-ui, sans-serif); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out; background: var(--card, #f8f4e6); color: var(--ink, #1c1b18); } .ds-btn:hover { background: var(--hover, #f1ead5); border-color: var(--ink-2, #57503f); } .ds-btn:active { background: var(--rule, #d5c9a8); } .ds-btn:focus-visible { outline: 2px solid var(--ink, #1c1b18); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Solid ink for the forward action.",
+      "html": "<button class=\"ds-btn-primary\">Restore</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; min-height: 2rem; padding: 0 12px; border: 1px solid var(--rule-strong, #b3a588); border-radius: 3px; font: 600 0.875rem/1 var(--sans, system-ui, sans-serif); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out; background: var(--ink, #1c1b18); border-color: var(--ink, #1c1b18); color: var(--paper, #ebe2c8); } .ds-btn-primary:hover { background: #3a3731; } .ds-btn-primary:focus-visible { outline: 2px solid var(--ink, #1c1b18); outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger-solid",
+      "description": "Destructive action: red outline, solid red inside the confirm dialog.",
+      "html": "<button class=\"ds-btn-danger\">Revoke</button><button class=\"ds-btn-danger ds-solid\">Revoke device</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; min-height: 2rem; padding: 0 12px; border: 1px solid var(--rule-strong, #b3a588); border-radius: 3px; font: 600 0.875rem/1 var(--sans, system-ui, sans-serif); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out; margin-right: 8px; background: var(--card, #f8f4e6); color: var(--t1, #b42318); border-color: var(--t1, #b42318); } .ds-btn-danger:hover, .ds-btn-danger.ds-solid { background: var(--t1, #b42318); color: #fff; } .ds-btn-danger.ds-solid:hover { background: #8f1c13; } .ds-btn-danger:focus-visible { outline: 2px solid var(--ink, #1c1b18); outline-offset: 2px; }"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Labelled filter input.",
+      "html": "<label class=\"ds-field\">Filter<input type=\"search\" placeholder=\"Any column\"></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4px; width: 16rem; font: 600 0.75rem/1.2 var(--sans, system-ui, sans-serif); color: var(--ink-2, #57503f); } .ds-field input { min-height: 2rem; padding: 0 10px; border: 1px solid var(--rule-strong, #b3a588); border-radius: 3px; background: var(--card, #f8f4e6); color: var(--ink, #1c1b18); font: 400 0.875rem/1 var(--sans, system-ui, sans-serif); } .ds-field input:hover { border-color: var(--ink-2, #57503f); } .ds-field input:focus-visible { outline: 2px solid var(--ink, #1c1b18); outline-offset: 2px; }"
+    },
+    {
+      "name": "New Chip",
+      "kind": "chip",
+      "refersTo": "chip-new",
+      "description": "Amber marker with a word, e.g. unseen live-log rows.",
+      "html": "<span class=\"ds-chip\">New</span>",
+      "css": ".ds-chip { display: inline-block; padding: 2px 6px; border-radius: 2px; background: var(--t2, #e8a317); color: var(--ink, #1c1b18); font: 600 0.6875rem/1.2 var(--sans, system-ui, sans-serif); letter-spacing: 0.05em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "nav-link-active",
+      "description": "Ink rail; the current page is a paper tab.",
+      "html": "<nav class=\"ds-rail\"><p>Fleet</p><a href=\"#\" aria-current=\"page\">Overview</a><a href=\"#\">Devices</a><a href=\"#\">IPs</a></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; width: 15rem; padding: 8px 12px 16px; background: var(--rail, #1e1d1a); font-family: var(--sans, system-ui, sans-serif); } .ds-rail p { margin: 8px 8px 4px; font: 600 0.75rem/1 var(--sans, system-ui, sans-serif); letter-spacing: 0.06em; text-transform: uppercase; color: var(--rail-muted, #a99f8a); } .ds-rail a { display: flex; align-items: center; min-height: 2.25rem; padding: 0 10px; border-radius: 3px; color: var(--rail-text, #ece5d4); text-decoration: none; transition: background-color 150ms ease-out, color 150ms ease-out; } .ds-rail a:hover { background: var(--rail-hover, #2b2925); } .ds-rail a[aria-current=page] { background: var(--paper, #ebe2c8); color: var(--ink, #1c1b18); font-weight: 600; } .ds-rail a:focus-visible { outline: 2px solid var(--rail-text, #ece5d4); outline-offset: 2px; }"
+    },
+    {
+      "name": "Confirm Dialog",
+      "kind": "card",
+      "refersTo": "dialog",
+      "description": "Destructive confirm: flat red top band, mono target, solid danger action.",
+      "html": "<div class=\"ds-dialog\"><h2>Revoke this device?</h2><p>It will be refused on its next request.</p><p class=\"ds-target\">0e43b85cc8aa41f2</p><div class=\"ds-actions\"><button class=\"ds-cancel\">Cancel</button><button class=\"ds-ok\">Revoke</button></div></div>",
+      "css": ".ds-dialog { width: 28rem; padding: 26px 22px 18px; border: 1px solid var(--rule-strong, #b3a588); background: linear-gradient(var(--t1, #b42318) 0 6px, var(--card, #f8f4e6) 6px); color: var(--ink, #1c1b18); box-shadow: 0 10px 28px rgb(28 27 24 / 0.22), 0 2px 6px rgb(28 27 24 / 0.12); font-family: var(--sans, system-ui, sans-serif); } .ds-dialog h2 { margin: 0 0 8px; font: 600 1.25rem/1.25 var(--sans, system-ui, sans-serif); } .ds-dialog p { margin: 0 0 12px; color: var(--ink-2, #57503f); } .ds-dialog .ds-target { padding: 8px 10px; background: var(--paper, #ebe2c8); border: 1px solid var(--rule, #d5c9a8); border-radius: 2px; color: var(--ink, #1c1b18); font: 0.8125rem/1.4 var(--mono, Consolas, monospace); } .ds-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; } .ds-actions button { min-height: 2rem; padding: 0 12px; border: 1px solid var(--rule-strong, #b3a588); border-radius: 3px; background: var(--card, #f8f4e6); color: var(--ink, #1c1b18); font: 600 0.875rem/1 var(--sans, system-ui, sans-serif); cursor: pointer; } .ds-actions .ds-cancel:hover { background: var(--hover, #f1ead5); } .ds-actions .ds-ok { background: var(--t1, #b42318); border-color: var(--t1, #b42318); color: #fff; } .ds-actions .ds-ok:hover { background: #8f1c13; } .ds-actions button:focus-visible { outline: 2px solid var(--ink, #1c1b18); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Triage Tag",
+    "overview": "Trust is triage. Every device carries a tag: Revoked, Lower trust or Verified, and every request may carry one more, Failed. The console is printed on manila card stock beside an ink-black rail, in black ink type. Colour is rationed: four triage inks exist, they state trust on the four-band strip and the board's name tabs, take a few named secondary roles elsewhere, and always travel with a word.\n\nThe density is that of a working desk tool for long sessions with the live log open: hairline module rules, 36px table rows, tabular figures everywhere numbers sit in columns. Hierarchy comes from scale and weight inside one system sans, never from a second face or from decoration. Surfaces are flat; depth exists only for things that float above the page (the confirm dialog and the toast).\n\nThe world refuses the black-and-neon \"hacker terminal\" and the grey SaaS card grid. It reads like a printed field form: paper, ink, a coloured tab where a state needs to be seen from across the room.",
+    "keyCharacteristics": [
+      "Manila paper ground, ink rail, ink type; colour reserved for trust state.",
+      "The four-band triage strip, one band filled, always next to its word.",
+      "One sans family for everything; mono only for IDs, IPs, hashes and paths.",
+      "Hairline rules and flat tonal panels instead of shadows.",
+      "Revoked prints in greyscale; new live rows stay marked until seen."
+    ],
+    "rules": [
+      {
+        "name": "The Triage Ink Rule",
+        "body": "The four-band strip and the band name tabs mean trust state and nothing else. Outside the strip the inks keep only their listed secondary roles (red for destructive and Kill, amber for unseen or exhausted markers, green for the sign-in band). Every appearance is paired with a word; colour alone never carries status.",
+        "section": "colors"
+      },
+      {
+        "name": "The Amber Is a Fill Rule",
+        "body": "Amber never colours text. It is a background with Ink on top.",
+        "section": "colors"
+      },
+      {
+        "name": "The No Brand Accent Rule",
+        "body": "Interactive emphasis is Ink on paper. Red appears on controls only for destructive actions, and in row-action columns only on hover or focus.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Family Rule",
+        "body": "No second face. A new role gets a size or weight, not a font.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Any number that sits in a column, a count or a figure strip uses tabular figures.",
+        "section": "typography"
+      },
+      {
+        "name": "The Paper Doesn't Lift Rule",
+        "body": "Anything that lives in the page is flat. Only an overlay casts a shadow.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** pair every triage ink with its word and its band position.",
+      "**Do** keep amber as a fill with Ink text on it.",
+      "**Do** confirm every destructive action in the dialog with the red top band and the solid danger button.",
+      "**Do** print revoked items in greyscale and keep new live rows tinted and chipped until seen.",
+      "**Do** use tabular figures for every column of numbers and mono for every machine identifier.",
+      "**Do** keep all styling in the same-origin stylesheet; set dynamic values through CSSOM custom properties (as the share bar does with `--share`)."
+    ],
+    "donts": [
+      "**Don't** use the triage strip for anything but trust; verdicts, severities and statuses get words.",
+      "**Don't** mark a device Failed; Failed is a request state.",
+      "**Don't** add a second typeface or load fonts from a third party.",
+      "**Don't** use inline style attributes; the CSP forbids them.",
+      "**Don't** put shadows on in-page panels, or blend triage inks into gradients or glows.",
+      "**Don't** introduce a neon-on-black terminal look or a grey SaaS card grid."
+    ]
+  }
+}

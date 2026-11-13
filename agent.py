@@ -1,7 +1,7 @@
 """
 agent.py
 ========
-Tier 1 EDR -- Endpoint Security Agent
+Telltale -- Tier 1 Endpoint Security Agent
 Process Interception -> Suspension -> Inference -> Routing
 
 Monitors all new process creation via WMI, suspends unknown processes,
@@ -41,6 +41,16 @@ Production Corrections Applied:
   #24 Absolute paths for log/DB/model (CWD-hijack proof)
   #25 WMI watcher timeout so Ctrl+C / shutdown works
   #26 PID-reuse guard before kill; TOCTOU re-stat before caching
+  #27 Dormant processes (no behavior yet) watched up to MAX_WATCH, not dropped at 30s
+  #28 Processes that exit mid-window still get a verdict (post-mortem alert / Tier-2)
+  #29 Window finalized early once the 50-event training window is full
+  #30 Alert-only by default; killing requires --mode enforce / EDR_MODE=enforce
+  #31 Abusable signed tools (shells, script hosts, LOLBins) are always monitored
+  #32 Ghost processes (exited before triage) are judged from their Sysmon events
+  #33 Cloud Tier 2 is signed: TPM device key on requests, server key on replies,
+      primary -> fallback endpoint failover (EDR_CLOUD_ENDPOINTS)
+  #34 Ask mode: threats go to the user's helper dialog (Close app / Run anyway /
+      Send report); an app is only closed when the user clicks Close
 """
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
@@ -51,7 +61,9 @@ import time
 import uuid
 import ctypes
 import ctypes.wintypes as wt
+import base64
 import hashlib
+import json
 import sqlite3
 import logging
 import threading
@@ -65,6 +77,11 @@ import wmi
 import psutil
 import onnxruntime as ort
 
+try:
+    import edr_sensor                  # Rust Sysmon feature extractor (optional)
+except ImportError:
+    edr_sensor = None
+
 
 # ══════════════════════════════════════════════════════════════
 # PHASE 1: CONSTANTS, CONFIG & LOGGING
@@ -76,16 +93,63 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ── Model (Tier 1 — Endpoint) ──
 ONNX_MODEL_PATH = os.path.join(BASE_DIR, "tier1_behavioral.onnx")
 FEATURE_DIM     = 99               # behavioral feature vector length (must match training)
+FEATURE_META_PATH = os.path.join(BASE_DIR, "dataset", "behavioral_dataset_meta.json")
+MIN_SENSOR_EVENTS = 3              # training MIN_LEN: fewer events are never scored
 
 # ── Cloud API (Tier 2 — server.py) ──
-CLOUD_API_URL   = "http://127.0.0.1:8000/score"   # Tier-2 FastAPI server
+CLOUD_API_URL   = os.environ.get("EDR_CLOUD_URL", "http://127.0.0.1:8000/score")   # Tier-2 FastAPI server
+
+# ── Signed cloud Tier 2 (#33, docs/PROD_ARCHITECTURE.md 4.1). Set all three to use it instead of server.py ──
+# (#35) A release build bakes the endpoints and keys into edr_sensor (encrypted with obfstr); env vars win.
+RELEASE = edr_sensor.release_config() if hasattr(edr_sensor, "release_config") else {}
+CLOUD_ENDPOINTS = [u.strip().rstrip("/") for u in (os.environ.get("EDR_CLOUD_ENDPOINTS") or RELEASE.get("endpoints", "")).split(",") if u.strip()]
+LICENCE_KEY     = os.environ.get("EDR_LICENCE_KEY", "")
+SERVER_PUBKEY   = os.environ.get("EDR_SERVER_PUBKEY") or RELEASE.get("server_pubkey", "")   # base64 Ed25519; must sign every reply
+# (#35) TLS pinning: Tier-2 calls trust only these roots (packaging/pinned_roots.pem, shipped next to the exe).
+PINNED_CA       = os.path.join(BASE_DIR, "pinned_roots.pem")
+
+# ── Signed updates (#36): a manifest signed with the release key, checked daily (release builds only) ──
+AGENT_VERSION   = "0.2.3"
+UPDATE_URL      = os.environ.get("EDR_UPDATE_URL") or RELEASE.get("update_url", "")
+UPDATE_PUBKEY   = os.environ.get("EDR_UPDATE_PUBKEY") or RELEASE.get("update_pubkey", "")
+UPDATE_EVERY_S  = 24 * 3600
+STOP = threading.Event()   # set by the Windows service (haltline_service.py) to stop main()
 
 # ── Behavioral monitoring (#16, #21) ──
 MONITOR_WINDOW     = 30            # seconds each unknown process is observed
 MONITOR_INTERVAL   = 2             # seconds between scoring ticks
 MAX_MONITORED      = 256           # hard cap on concurrently watched processes
+MAX_WATCH          = 300           # dormant processes (no behavior yet) are watched up to 5 min (#27)
+EXIT_SETTLE        = 2             # seconds to let late Sysmon events land after exit (#28)
+MAX_GHOSTS         = 512           # cap on pending post-exit verdicts for ghost processes (#32)
 # (#23) While BehavioralExtractor returns random data, kills are only logged.
 ENFORCE_ON_SIMULATED = False
+
+# (#30) What a THREAT verdict does. 'alert' (default) only logs -- the models have
+# a measurable false-positive rate, so killing must be an explicit opt-in:
+#   set EDR_MODE=enforce   or   python agent.py --mode enforce
+AGENT_MODE = os.environ.get("EDR_MODE", "alert").strip().lower()
+MODES = ("alert", "ask", "enforce")   # 'ask' (#34): the user decides in telltale_helper.py
+
+# ── Ask mode (#34): the agent (SYSTEM) writes alerts, the user's helper writes decisions ──
+IPC_DIR        = os.environ.get("EDR_IPC_DIR", os.path.join(os.environ.get("ProgramData", BASE_DIR), "Telltale"))
+ALERTS_DIR     = os.path.join(IPC_DIR, "alerts")
+DECISIONS_DIR  = os.path.join(IPC_DIR, "decisions")
+REPORTS_OUTBOX = os.path.join(IPC_DIR, "reports_outbox.jsonl")   # uploaded once /v1/report exists (step 5)
+
+
+def read_secret(path):
+    """A one-line secret file, stripped; "" if it is missing or unreadable."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+# (#35) The installer writes the licence here, readable by SYSTEM and Administrators only
+# (the service's registry Environment is readable by every local user).
+LICENCE_KEY = LICENCE_KEY or read_secret(os.path.join(IPC_DIR, "licence.key"))
 
 # ── Trust cache (#18) ──
 TRUST_CACHE_CAPACITY = 1000
@@ -140,11 +204,20 @@ CRITICAL_PROCESSES = {
     "runtimebroker.exe", "shellexperiencehost.exe",
     "startmenuexperiencehost.exe", "searchhost.exe",
     "textinputhost.exe", "ctfmon.exe",
-    # Fix #14: Shells — suspending these causes fork-bomb deadlock
-    # because the agent spawns them for Authenticode fallback checks.
-    # Even with native WinVerifyTrust, these must be safelisted.
-    "powershell.exe", "pwsh.exe", "cmd.exe",
     "wmiprvse.exe",
+}
+
+# (#31) Signed Windows tools that attackers commonly abuse. A valid Microsoft
+# signature says WHO built the binary, not what it is being used for, so these
+# are behavior-monitored even when signed / in System32. (Shells were safelisted
+# while the agent suspended processes (#14); nothing is suspended since #16.)
+# Matched on the real exe basename -- this list only ADDS scrutiny, never trust.
+ALWAYS_WATCH = {
+    "cmd.exe", "powershell.exe", "pwsh.exe", "powershell_ise.exe",
+    "wscript.exe", "cscript.exe", "mshta.exe",
+    "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe",
+    "installutil.exe", "regasm.exe", "regsvcs.exe", "wmic.exe", "msiexec.exe",
+    "cmstp.exe", "mavinject.exe", "forfiles.exe", "esentutl.exe",
 }
 
 # ── Fix #8/#20: Trusted Authenticode Publishers ──────────────
@@ -164,7 +237,11 @@ TRUSTED_SIGNERS = {
 }
 
 # ── Logging Setup ── (#7, #24)
-LOG_FILE     = os.path.join(BASE_DIR, "agent.log")
+# Release builds log to ProgramData\Telltale (SYSTEM and Administrators only): the log names every
+# program on the PC and the server address, so it must not sit in Program Files where all users read.
+LOG_DIR      = IPC_DIR if "__compiled__" in globals() else BASE_DIR   # Nuitka sets __compiled__ in the .exe
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE     = os.path.join(LOG_DIR, "agent.log")
 LOG_MAX_MB   = 5
 LOG_BACKUPS  = 3
 
@@ -269,6 +346,19 @@ def is_protected_system_path(exe_path: str) -> bool:
     return any(p.startswith(d) for d in PROTECTED_DIR_PREFIXES)
 
 
+PROGRAM_FILES_PREFIXES = tuple({_dir_prefix(v) for v in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+                                                      os.environ.get("ProgramW6432")) if v})
+
+
+def admin_only_path(exe_path: str) -> bool:
+    """In a folder only administrators can write (Windows system folders, Program Files).
+    shortcut: assumes installers keep Program Files ACLs default; check the ACL if that proves untrue."""
+    p = _norm_path(exe_path)
+    return bool(p) and (is_protected_system_path(exe_path) or
+                        (not any(p.startswith(w) for w in USER_WRITABLE_PREFIXES)
+                         and any(p.startswith(d) for d in PROGRAM_FILES_PREFIXES)))
+
+
 def file_fingerprint(exe_path: str):
     """
     (normalized_path, mtime_ns, size) or None if the file can't be stat'd.
@@ -320,6 +410,93 @@ class LRUCache:
     def __len__(self) -> int:
         with self._lock:
             return len(self._data)
+
+
+# ── Cleared by Tier 2: a file Tier 2 allowed isn't sent again for CLEARED_TTL_S ───────────
+# Light on the PC by design: an in-memory dict keyed on the fingerprint _triage already takes
+# (path, mtime, size -- no file hashing), bounded, and saved at most once a minute.
+CLEARED_TTL_S = 7 * 86400
+CLEARED_MAX = 2000
+CLEARED_SAVE_EVERY_S = 60
+# Interpreters run whatever script they are given: the same signed file can be harmless one
+# run and ransomware the next, so they (and the abusable tools in ALWAYS_WATCH) are never cleared.
+INTERPRETERS = {"bash.exe", "sh.exe", "zsh.exe", "python.exe", "pythonw.exe", "py.exe", "node.exe",
+                "deno.exe", "bun.exe", "perl.exe", "ruby.exe", "php.exe", "java.exe", "javaw.exe",
+                "wsl.exe", "autohotkey.exe", "autoit3.exe"}
+
+
+class ClearedCache:
+    """fingerprint -> when Tier 2 allowed that exact file. Thread-safe."""
+
+    def __init__(self, path, ttl=CLEARED_TTL_S, cap=CLEARED_MAX):
+        self.path, self.ttl, self.cap = path, ttl, cap
+        self._d = OrderedDict()
+        self._lock = threading.Lock()
+        self._dirty, self._saved = False, 0.0
+        try:
+            with open(path, encoding="utf-8") as f:
+                rows = json.load(f)
+            now = time.time()
+            for fp_path, mtime, size, t in rows[-cap:]:
+                if 0 <= now - t < ttl:
+                    self._d[(fp_path, int(mtime), int(size))] = t
+        except (OSError, ValueError, TypeError):
+            pass   # first run, or an unreadable file: start empty
+
+    @staticmethod
+    def eligible(exe_path):
+        # Admin-only folders only: path + size + mtime can be forged (a backdated, same-size swap) where
+        # a normal program can write, e.g. Downloads or AppData.
+        name = os.path.basename(exe_path or "").lower()
+        return bool(name) and name not in INTERPRETERS and name not in ALWAYS_WATCH and admin_only_path(exe_path)
+
+    def allowed(self, fp):
+        if fp is None:
+            return False
+        with self._lock:
+            t = self._d.get(fp)
+            if t is None:
+                return False
+            if time.time() - t >= self.ttl:
+                del self._d[fp]
+                self._dirty = True
+                return False
+            return True
+
+    def add(self, fp):
+        with self._lock:
+            self._d[fp] = time.time()
+            self._d.move_to_end(fp)
+            while len(self._d) > self.cap:
+                self._d.popitem(last=False)
+            self._dirty = True
+        self.save()
+
+    def clear(self):
+        """After any threat: forget every earlier 'safe', so nothing stale stays trusted."""
+        with self._lock:
+            had = bool(self._d)
+            self._d.clear()
+            self._dirty = had or self._dirty
+        self.save(force=True)
+
+    def save(self, force=False):
+        now = time.time()
+        with self._lock:
+            if not self._dirty or (not force and now - self._saved < CLEARED_SAVE_EVERY_S):
+                return
+            rows = [[fp[0], fp[1], fp[2], t] for fp, t in self._d.items()]
+            self._dirty, self._saved = False, now
+        try:
+            with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(rows, f, separators=(",", ":"))
+            os.replace(self.path + ".tmp", self.path)
+        except OSError as e:
+            logger.warning(f"[CLEARED] could not save ({e}) -- kept in memory")
+
+    def __len__(self):
+        with self._lock:
+            return len(self._d)
 
 _wintrust_dll = ctypes.windll.wintrust
 
@@ -640,6 +817,73 @@ class BehavioralExtractor:
         # PROTOTYPE: uniform random features in [0, 1]
         return np.random.rand(1, self.feature_dim).astype(np.float32)
 
+    def forget(self, pid: int):
+        pass
+
+    def stop(self):
+        pass
+
+
+class SysmonExtractor:
+    """
+    Real behavioral features from live Sysmon telemetry, via the Rust
+    `edr_sensor` extension (build: see edr_sensor/README.md).
+
+    The Rust side subscribes to the Sysmon event log, buffers each process's
+    earliest 50 events, and computes the same 99 features as
+    build_behavioral_dataset.py (verified by edr_sensor/parity_check.py).
+    get_sequence() returns None until a process has MIN_SENSOR_EVENTS events,
+    so it is never scored on "no data" (#22).
+    """
+
+    is_simulated = False
+
+    def __init__(self, feature_dim: int = FEATURE_DIM):
+        if edr_sensor is None:
+            raise RuntimeError("edr_sensor extension is not installed")
+        if edr_sensor.FEATURE_DIM != feature_dim:
+            raise RuntimeError(
+                f"edr_sensor produces {edr_sensor.FEATURE_DIM} features, model expects {feature_dim}"
+            )
+        if os.path.exists(FEATURE_META_PATH):
+            with open(FEATURE_META_PATH, encoding="utf-8") as f:
+                trained = json.load(f)["features"]
+            if edr_sensor.feature_names() != trained:
+                raise RuntimeError("edr_sensor feature order differs from the training schema")
+        self.sensor = edr_sensor.Sensor()
+        self.sensor.start()          # OSError 15007 if Sysmon is not installed
+        logger.info(f"SysmonExtractor initialized (LIVE -- channel {edr_sensor.DEFAULT_CHANNEL})")
+
+    def get_sequence(self, pid: int):
+        vec = self.sensor.features(pid, MIN_SENSOR_EVENTS)
+        if vec is None:
+            return None
+        return np.asarray(vec, dtype=np.float32).reshape(1, -1)
+
+    def forget(self, pid: int):
+        self.sensor.forget(pid)
+
+    def creation_image(self, pid: int):
+        """Image path from the process's Sysmon EventID 1, even after it exited (#32)."""
+        get = getattr(self.sensor, "creation_image", None)
+        return get(pid) if get else None
+
+    def is_complete(self, pid: int) -> bool:
+        """The training window (first 50 events) is full -- the vector is final (#29)."""
+        return self.sensor.event_count(pid) >= edr_sensor.WINDOW
+
+    def stop(self):
+        self.sensor.stop()
+
+
+def make_extractor():
+    """Live Sysmon features when available, otherwise the simulated dry-run (#23)."""
+    try:
+        return SysmonExtractor()
+    except (RuntimeError, OSError) as e:
+        logger.warning(f"Live Sysmon features unavailable ({e}) -- falling back to SIMULATED")
+        return BehavioralExtractor()
+
 
 # ══════════════════════════════════════════════════════════════
 # PHASE 4 (cont): ONNX INFERENCE ENGINE
@@ -660,7 +904,7 @@ class InferenceEngine:
         if not os.path.exists(model_path):
             raise FileNotFoundError(
                 f"ONNX model not found: {model_path}\n"
-                f"Run train_tier1.py first to generate the model."
+                f"Run train_tier1_behavioral.py first to generate the model."
             )
 
         # CPU-only for endpoint deployment (no GPU dependency)
@@ -691,6 +935,254 @@ class InferenceEngine:
 
 
 # ══════════════════════════════════════════════════════════════
+# PHASE 4b: SIGNED CLOUD TIER-2 CLIENT (#33)
+# ══════════════════════════════════════════════════════════════
+
+class CloudError(Exception):
+    """Tier 2 answered, but the answer can't be used (rejected, unsigned, mismatched)."""
+
+
+class CloudUnavailable(requests.exceptions.ConnectionError):
+    """No endpoint answered -- handled like an offline cloud (grey-zone timeout policy)."""
+
+
+class LicenceRevoked(CloudError):
+    """The server signed it: this PC has no valid licence (revoked, deleted/invalid key, or no seat left)."""
+
+
+LICENCE_REFUSALS = {"revoked", "invalid", "full"}
+LICENCE_CHECK_S = 6 * 3600   # re-check even when nothing is escalated, so a deleted licence is noticed
+LICENCE_STATUS = "licence.status"   # in ALERTS_DIR (the user's helper can read it); not .json, so not an alert
+
+
+SENT_LOG = "sent.jsonl"   # in ALERTS_DIR: what this PC sent, for the helper's "What Haltline sends" window
+SENT_KEEP = 100
+_sent_lock = threading.Lock()
+
+
+def record_sent(path, body, result, about=None):
+    """Transparency: keep the last SENT_KEEP requests to the cloud, exactly as sent (licence key hidden,
+    features labelled), and what came back. Never lets a logging problem break a request."""
+    try:
+        shown = dict(body)
+        if "licence_key" in shown:
+            shown["licence_key"] = str(shown["licence_key"])[:3] + "... (hidden)"
+        if "public_key" in shown:
+            shown["public_key"] = str(shown["public_key"])[:16] + "..."
+        if isinstance(shown.get("features"), list):
+            try:
+                shown["features"] = dict(zip(feature_names(), shown["features"]))
+            except Exception:
+                pass
+        # "about": which program it concerned (name, PID, path) -- kept here only, NOT part of what was sent
+        line = json.dumps({"ts": round(time.time(), 3), "path": path, "sent": shown, "result": result, "about": about},
+                          separators=(",", ":"))
+        p = os.path.join(ALERTS_DIR, SENT_LOG)
+        with _sent_lock:
+            try:
+                with open(p, encoding="utf-8") as f:
+                    lines = f.read().splitlines()[-(SENT_KEEP - 1):]
+            except FileNotFoundError:
+                lines = []
+            os.makedirs(ALERTS_DIR, exist_ok=True)
+            with open(p + ".tmp", "w", encoding="utf-8") as f:
+                f.write("\n".join(lines + [line]) + "\n")
+            os.replace(p + ".tmp", p)
+    except Exception as e:
+        logger.warning(f"[SENT] could not record a request ({e})")
+
+
+def licence_lost(reason):
+    """Stop protecting entirely: main()'s loop ends on STOP and the service stops cleanly, so Windows
+    doesn't restart it. Only called for a server-signed refusal, so a faked or blocked reply can't do it."""
+    logger.critical(f"[LICENCE] server says licence {reason} -- Haltline stops protecting this PC")
+    try:
+        _write_json(ALERTS_DIR, LICENCE_STATUS, {"reason": reason, "ts": time.time()})
+    except OSError as e:
+        logger.error(f"[LICENCE] could not tell the user ({e})")
+    STOP.set()
+
+
+class CloudClient:
+    """
+    Every request is signed with the device key (edr_sensor.DeviceKey: TPM when available).
+    Only replies signed by SERVER_PUBKEY that echo our nonce are accepted, so a fake server
+    can't hand out verdicts. The first endpoint is used until it fails (network error, 5xx,
+    or 429 such as Cloudflare's free daily cap); then the fallback is tried first for
+    FAILOVER_S. Protocol: tier2_scorer/README.md.
+    """
+
+    FAILOVER_S = 600
+
+    def __init__(self, endpoints, licence_key, server_pubkey_b64, key):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        self.endpoints, self.licence, self.key = endpoints, licence_key, key
+        self.server_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(server_pubkey_b64))
+        self.public_key = key.public_key()
+        self.device_id = hashlib.sha256(self.public_key).hexdigest()[:32]
+        self.registered = False
+        self.primary_down_until = 0.0
+
+    def register(self):
+        """Idempotent; also re-publishes the key to the edge. Only via the primary (Cloudflare)."""
+        body = {"licence_key": self.licence, "key_kind": self.key.kind,
+                "public_key": base64.b64encode(self.public_key).decode()}
+        data = self._post("/v1/register", body, failover=False)
+        if data.get("device_id") != self.device_id:
+            raise CloudError("register reply is for a different device")
+        self.registered = True
+        try:
+            os.remove(os.path.join(ALERTS_DIR, LICENCE_STATUS))   # licence valid again (e.g. restored)
+        except OSError:
+            pass
+        logger.info(f"[CLOUD] device {self.device_id} registered ({self.key.kind} key)")
+
+    def score(self, features, about=None):
+        if not self.registered:
+            self.register()
+        return self._post("/v1/score", {"features": features}, about=about)
+
+    def report(self, body):
+        """A report the user chose to send (#34). Only via the primary (Cloudflare)."""
+        if not self.registered:
+            self.register()
+        return self._post("/v1/report", body, failover=False)
+
+    def _post(self, path, body, failover=True, about=None):
+        """_send, and a copy of what was sent for the user's "What Haltline sends" window."""
+        try:
+            data = self._send(path, body, failover)
+        except Exception as e:
+            record_sent(path, body, f"failed: {e}"[:200], about)
+            raise
+        record_sent(path, body, data.get("verdict") or "accepted", about)
+        return data
+
+    def _send(self, path, body, failover=True):
+        raw = json.dumps(body, separators=(",", ":")).encode()
+        body_hash = hashlib.sha256(raw).hexdigest()
+        order = list(self.endpoints) if failover else self.endpoints[:1]
+        if failover and time.time() < self.primary_down_until:
+            order.reverse()
+        last = None
+        for base in order:
+            nonce, stamp = os.urandom(16).hex(), str(int(time.time()))
+            msg = "\n".join(("TT1", "POST", path, self.device_id, stamp, nonce, body_hash)).encode()
+            # x-amz-content-sha256: CloudFront OAC needs the body hash for POSTs to the Lambda URL.
+            headers = {"content-type": "application/json", "x-tt-device": self.device_id,
+                       "x-tt-time": stamp, "x-tt-nonce": nonce, "x-amz-content-sha256": body_hash,
+                       "x-tt-sig": base64.b64encode(self.key.sign(msg)).decode()}
+            try:
+                r = requests.post(base + path, data=raw, headers=headers, timeout=5,
+                                  verify=PINNED_CA if os.path.exists(PINNED_CA) else True)
+                if r.status_code >= 500 or r.status_code == 429:
+                    raise CloudUnavailable(f"HTTP {r.status_code}")
+            except requests.exceptions.RequestException as ex:
+                last = ex
+                if base == self.endpoints[0] and len(self.endpoints) > 1:
+                    self.primary_down_until = time.time() + self.FAILOVER_S
+                    logger.warning(f"[CLOUD] primary endpoint failed ({ex}) -- fallback first for {self.FAILOVER_S}s")
+                continue
+            if r.status_code != 200:
+                if r.status_code == 401 and path == "/v1/score":
+                    self.registered = False   # edge may not know the key yet: re-register next time
+                raise CloudError(f"{path} rejected: HTTP {r.status_code} {r.text[:120]}")
+            try:
+                self.server_key.verify(base64.b64decode(r.headers.get("x-tt-resp-sig", "")), r.content)
+            except Exception:
+                raise CloudError(f"{path}: reply is not signed by the server key") from None
+            data = r.json()
+            if data.get("nonce") != nonce:
+                raise CloudError(f"{path}: reply does not match this request")
+            if data.get("licence") in LICENCE_REFUSALS:   # signed and fresh: the licence really is gone
+                licence_lost(data["licence"])
+                raise LicenceRevoked(f"licence {data['licence']}")
+            return data
+        raise CloudUnavailable(f"no Tier-2 endpoint answered ({last})")
+
+
+def make_cloud_client():
+    """Signed cloud Tier 2 when configured (#33); None keeps the local server.py."""
+    if not CLOUD_ENDPOINTS:
+        return None
+    if not (LICENCE_KEY and SERVER_PUBKEY) or not hasattr(edr_sensor, "DeviceKey"):
+        logger.error("EDR_CLOUD_ENDPOINTS is set but EDR_LICENCE_KEY, EDR_SERVER_PUBKEY or "
+                     "edr_sensor.DeviceKey is missing -- cloud Tier 2 disabled")
+        return None
+    try:
+        client = CloudClient(CLOUD_ENDPOINTS, LICENCE_KEY, SERVER_PUBKEY, edr_sensor.DeviceKey())
+    except Exception as e:
+        logger.error(f"Cloud Tier 2 disabled: {e}")
+        return None
+    logger.info(f"Cloud Tier 2: {len(CLOUD_ENDPOINTS)} endpoint(s), device {client.device_id}")
+    return client
+
+
+def verify_update(manifest_raw, sig_b64, pubkey_b64, current=AGENT_VERSION):
+    """(#36) The manifest, if the release key signed these exact bytes and it is newer; else None."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64)).verify(base64.b64decode(sig_b64), manifest_raw)
+        m = json.loads(manifest_raw)
+        newer = tuple(map(int, m["version"].split("."))) > tuple(map(int, current.split(".")))
+        if newer and m["installer"].startswith("https://") and len(m["sha256"]) == 64:
+            return m
+    except Exception:
+        pass
+    return None
+
+
+class UpdateChecker:
+    """(#36) Daily: fetch the signed manifest; when newer, download the installer, check its
+    SHA-256 against the signed manifest, and run it silently (it stops and replaces this service)."""
+
+    def __init__(self):
+        self._stop = threading.Event()
+
+    def monitor(self):
+        delay = 60   # first check a minute after start
+        while not self._stop.wait(delay):
+            delay = UPDATE_EVERY_S
+            try:
+                self.check()
+            except Exception as e:
+                logger.warning(f"[UPDATE] check failed: {e}")
+
+    def check(self):
+        # The signature and the hash protect these downloads, so any CA may serve them (e.g. GitHub).
+        raw = requests.get(UPDATE_URL, timeout=20).content
+        sig = requests.get(UPDATE_URL + ".sig", timeout=20).text.strip()
+        m = verify_update(raw, sig, UPDATE_PUBKEY)
+        if m is None:
+            return None
+        data = requests.get(m["installer"], timeout=300).content
+        if hashlib.sha256(data).hexdigest() != m["sha256"].lower():
+            logger.error(f"[UPDATE] {m['version']}: installer hash does not match the signed manifest -- not installed")
+            return None
+        path = os.path.join(IPC_DIR, "updates", f"Haltline-Setup-{m['version']}.exe")   # SYSTEM/admins only (ACL)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        logger.info(f"[UPDATE] installing {m['version']} (now {AGENT_VERSION})")
+        import subprocess
+        subprocess.Popen([path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], close_fds=True,
+                         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+        return path
+
+    def stop(self):
+        self._stop.set()
+
+
+def ask_tier2(payload, about=None):
+    """Tier-2 verdict: the signed cloud client when configured, else the local server.py."""
+    if cloud_client is not None:
+        return cloud_client.score(payload["features"], about)
+    resp = requests.post(CLOUD_API_URL, json=payload, timeout=5)
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ══════════════════════════════════════════════════════════════
 # PHASE 5: PROCESS TRIAGE -- THE DECISION ENGINE
 #   Option B (#16): NO suspend(). Triage is path/signature based and
 #   fast; unknown processes are handed to the BehaviorMonitor.
@@ -711,10 +1203,14 @@ inference_engine = None
 sequence_extractor = None
 whitelist_db = None
 behavior_monitor = None
+cloud_client = None
+cleared = None   # ClearedCache, set in main()
 
 
 def actions_enforced() -> bool:
-    """(#23) Kill actions are real only when sequence data is real."""
+    """Kills happen only in enforce mode (#30) and only on real sequence data (#23)."""
+    if AGENT_MODE != "enforce":
+        return False
     if ENFORCE_ON_SIMULATED:
         return True
     return not getattr(sequence_extractor, "is_simulated", True)
@@ -726,6 +1222,48 @@ def _cache_trusted(path: str, fp_before):
         VERIFIED_PATH_CACHE.add(fp_before)
 
 
+def _triage(pid: int, process_name: str, exe_path: str):
+    """
+    Trust decision for one executable path (steps 3-6 below).
+    Returns (verdict, signer): verdict is one of
+      "critical"    critical OS process in its protected path -> skip
+      "cached"      fingerprint already verified              -> skip
+      "trusted"     trusted publisher signature               -> skip
+      "whitelisted" custom SHA-256 whitelist                  -> skip
+      "watch"       abusable signed tool (#31)                -> monitor
+      "unknown"     anything else                             -> monitor
+    """
+    name_lower = (process_name or "").lower()
+    if name_lower in CRITICAL_PROCESSES:
+        if is_protected_system_path(exe_path):
+            return "critical", ""
+        logger.warning(
+            f"MASQUERADE? PID:{pid} claims '{process_name}' but runs from "
+            f"{exe_path} -- NOT safelisted, will be analyzed"
+        )
+    if os.path.basename(exe_path).lower() in ALWAYS_WATCH:
+        return "watch", ""
+    fp = file_fingerprint(exe_path)
+    if fp is not None and fp in VERIFIED_PATH_CACHE:
+        return "cached", ""
+    if cleared is not None and ClearedCache.eligible(exe_path) and cleared.allowed(fp):
+        return "cleared", ""
+    is_trusted, signer = verify_signature(exe_path)
+    if is_trusted:
+        _cache_trusted(exe_path, fp)
+        return "trusted", signer
+    if whitelist_db and whitelist_db.is_whitelisted(exe_path):
+        _cache_trusted(exe_path, fp)
+        return "whitelisted", ""
+    return "unknown", signer
+
+
+def _can_judge_ghosts() -> bool:
+    """Ghost verdicts need real Sysmon data that outlives the process (#32)."""
+    return (hasattr(sequence_extractor, "creation_image")
+            and not getattr(sequence_extractor, "is_simulated", True))
+
+
 def handle_new_process(pid: int, process_name: str):
     """
     Fast triage for a newly spawned process (ThreadPoolExecutor worker).
@@ -733,7 +1271,9 @@ def handle_new_process(pid: int, process_name: str):
     Decision chain:
       1. Self-PID check                       (#1)
       2. Resolve exe path (no suspend)        (#4, #16)
+         -> already exited: post-exit verdict from Sysmon data (#32)
       3. Critical name + protected PATH       (#2, #19)
+      3b. Abusable signed tool -> monitor     (#31)
       4. Fingerprint cache (path,mtime,size)  (#17, #18)
       5. Authenticode + publisher             (#8, #20)
       6. Custom whitelist                     (#8)
@@ -750,7 +1290,12 @@ def handle_new_process(pid: int, process_name: str):
         proc = psutil.Process(pid)
         exe_path = proc.exe()
     except psutil.NoSuchProcess:
-        logger.debug(f"Ghost process PID:{pid} {process_name} -- already exited")
+        if behavior_monitor is not None and _can_judge_ghosts():
+            behavior_monitor.register_ghost(pid, process_name)
+            logger.debug(f"Ghost process PID:{pid} {process_name} -- exited before triage, "
+                         f"judging it from its Sysmon events")
+        else:
+            logger.debug(f"Ghost process PID:{pid} {process_name} -- already exited")
         return
     except (psutil.AccessDenied, psutil.ZombieProcess):
         if name_lower in CRITICAL_PROCESSES:
@@ -766,43 +1311,28 @@ def handle_new_process(pid: int, process_name: str):
         logger.warning(f"Empty exe path PID:{pid} {process_name} -- not monitorable")
         return
 
-    # ── #2/#19: safelist by PATH, never by name alone ───────
-    protected = is_protected_system_path(exe_path)
-    if name_lower in CRITICAL_PROCESSES:
-        if protected:
-            logger.debug(f"SKIP (critical, protected path) PID:{pid} {process_name}")
-            return
-        logger.warning(
-            f"MASQUERADE? PID:{pid} claims '{process_name}' but runs from "
-            f"{exe_path} -- NOT safelisted, will be analyzed"
-        )
-
-    # ── #17: cache keyed by (path, mtime_ns, size) ──────────
-    fp = file_fingerprint(exe_path)
-    if fp is not None and fp in VERIFIED_PATH_CACHE:
+    verdict, signer = _triage(pid, process_name, exe_path)
+    if verdict == "critical":
+        logger.debug(f"SKIP (critical, protected path) PID:{pid} {process_name}")
+    elif verdict == "cached":
         logger.debug(f"ALLOWED (cached) PID:{pid} {process_name}")
-        return
-
-    # ── #8/#20: signature + publisher ───────────────────────
-    is_trusted, signer = verify_signature(exe_path)
-    if is_trusted:
-        _cache_trusted(exe_path, fp)
-        logger.info(f"[TRUSTED]  {process_name} allowed PID:{pid} ({signer[:60]})") 
-        return
-
-    # ── #8 Layer 1B: custom whitelist ───────────────────────
-    if whitelist_db and whitelist_db.is_whitelisted(exe_path):
-        _cache_trusted(exe_path, fp)
+    elif verdict == "cleared":
+        logger.debug(f"ALLOWED (cleared by Tier 2 earlier) PID:{pid} {process_name}")
+    elif verdict == "trusted":
+        logger.info(f"[TRUSTED]  {process_name} allowed PID:{pid} ({signer[:60]})")
+    elif verdict == "whitelisted":
         logger.info(f"ALLOWED (custom whitelist) PID:{pid} {process_name}")
-        return
-
-    # ── Unknown -> behavioral observation (process keeps running) ──
-    logger.info(
-        f"UNKNOWN PID:{pid} {process_name} ({signer}) -- "
-        f"monitoring behavior for {MONITOR_WINDOW}s  path={exe_path}"
-    )
-    if behavior_monitor is not None:
-        behavior_monitor.register(pid, process_name, exe_path)
+    else:
+        if verdict == "watch":
+            logger.info(f"[WATCH]    {process_name} PID:{pid} -- signed system tool, "
+                        f"monitoring behavior  path={exe_path}")
+        else:
+            logger.info(
+                f"UNKNOWN PID:{pid} {process_name} ({signer}) -- "
+                f"monitoring behavior for {MONITOR_WINDOW}s  path={exe_path}"
+            )
+        if behavior_monitor is not None:
+            behavior_monitor.register(pid, process_name, exe_path)
 
 
 def _safe_kill(proc, pid: int, name: str):
@@ -822,10 +1352,87 @@ def _safe_kill(proc, pid: int, name: str):
     return False
 
 
-def _enforce_kill(proc, pid, name, path, reason):
-    """Kill, or just log in dry-run mode (#23)."""
+def _write_json(folder, name, data):
+    """Atomic write, so a reader never sees half a file."""
+    os.makedirs(folder, exist_ok=True)
+    tmp = os.path.join(folder, name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, os.path.join(folder, name))
+
+
+# Feature -> plain-language reason for the user's dialog (#34).
+REASONS = {
+    "has_double_extension": "Hid its real type behind a double extension (e.g. .pdf.exe)",
+    "is_executing_from_temp": "Runs from a temporary folder",
+    "is_from_downloads": "Runs from the Downloads folder",
+    "is_system_binary_wrong_path": "Uses a Windows system file name from the wrong folder",
+    "has_base64": "Ran an encoded (base64) command",
+    "has_powershell_bypass": "Started PowerShell hidden or with security policy bypassed",
+    "has_http_download": "Downloaded something from the internet in its command line",
+    "has_ps_obfuscation": "Ran an obfuscated PowerShell expression",
+    "has_persistence_cmd": "Tried to make itself start with Windows",
+    "reg_runkey_log": "Changed a Windows auto-start registry key",
+    "has_destructive_cmd": "Ran a command that deletes backups, shadow copies or event logs",
+    "file_exec_drops_log": "Created new program or script files",
+    "net_has_susp_port": "Connected to an unusual network port",
+    "office_spawns_exec": "Was started by an Office document",
+    "browser_spawns_exec": "Was started by a web browser",
+}
+_feature_names = None
+
+
+def feature_names():
+    """The 99 feature names, in vector order (cached)."""
+    global _feature_names
+    if _feature_names is None:
+        if edr_sensor is not None:
+            _feature_names = edr_sensor.feature_names()
+        else:
+            with open(FEATURE_META_PATH, encoding="utf-8") as f:
+                _feature_names = json.load(f)["features"]
+    return _feature_names
+
+
+def explain(features):
+    """Plain-language reasons from the features that are set; [] when there are none."""
+    if features is None:
+        return []
+    names = feature_names()
+    vec = np.asarray(features, dtype=float).ravel()
+    return [text for name, text in REASONS.items() if vec[names.index(name)] > 0]
+
+
+def ask_user(proc, pid, name, path, reason, features=None):
+    """
+    (#34) Ask mode: hand the threat to the user's helper dialog and return at once.
+    DecisionWatcher applies the answer. The app keeps running until the user decides.
+    """
+    try:
+        created = proc.create_time()
+    except psutil.Error:
+        logger.debug(f"Ask skipped: PID:{pid} {name} already exited")
+        return False
+    alert_id = uuid.uuid4().hex
+    _write_json(ALERTS_DIR, alert_id + ".json", {
+        "id": alert_id, "pid": pid, "created": created, "name": name, "path": path,
+        "reason": reason, "reasons": explain(features), "time": time.time(),
+    })
+    logger.critical(f"[ASK] THREAT PID:{pid} {name} -- {reason}  path={path}  "
+                    f"(waiting for the user, alert {alert_id})")
+    return False
+
+
+def _enforce_kill(proc, pid, name, path, reason, features=None):
+    """Kill, ask the user (#34), or just log in dry-run mode (#23)."""
+    if cleared is not None:
+        cleared.clear()   # a threat on this PC: no earlier "safe" stays trusted
+    if AGENT_MODE == "ask" and not getattr(sequence_extractor, "is_simulated", True):
+        return ask_user(proc, pid, name, path, reason, features)
     if not actions_enforced():
-        logger.warning(f"[DRY-RUN] would KILL PID:{pid} {name} -- {reason}  path={path}")
+        tag = "ALERT" if AGENT_MODE != "enforce" else "DRY-RUN"
+        logger.critical(f"[{tag}] THREAT PID:{pid} {name} -- {reason}  path={path}  "
+                        f"(not killed: mode={AGENT_MODE})")
         return False
     ok = _safe_kill(proc, pid, name)
     if ok:
@@ -846,7 +1453,11 @@ class BehaviorMonitor:
       no events yet             -> keep waiting (never scored as benign, #22)
       window over, max <= SAFE  -> benign, forget
       window over, in between   -> grey zone queue (Tier-2)
-      window over, no data      -> logged, forgotten (fail-open)
+      window full (50 events)   -> final early: the vector can no longer change (#29)
+      no data at window end     -> watch extended up to MAX_WATCH for dormant
+                                   processes, then logged (fail-open) (#27)
+      process exited            -> final verdict from its buffered behavior after
+                                   EXIT_SETTLE: post-mortem alert / Tier-2 (#28)
     """
 
     def __init__(self):
@@ -864,8 +1475,31 @@ class BehaviorMonitor:
                 logger.error(f"Monitor full ({MAX_MONITORED}) -- PID:{pid} {name} NOT watched")
                 return False
             self._watch[pid] = {
-                "pid": pid, "name": name, "path": path, "created": created,
+                "pid": pid, "name": name, "path": path, "created": created, "fp": file_fingerprint(path),
                 "started": time.time(), "max_score": 0.0, "scored": 0,
+                "last_seq": None, "exited_at": None, "pid_reused": False,
+                "extended": False,
+            }
+        return True
+
+    def register_ghost(self, pid, name):
+        """
+        (#32) A process that exited before triage could read its path. Its
+        Sysmon events are still buffered, so queue it for a post-exit verdict:
+        after EXIT_SETTLE the recorded image path is triaged like any other.
+        """
+        now = time.time()
+        with self._lock:
+            if pid in self._watch:
+                return False
+            if sum(1 for x in self._watch.values() if x.get("ghost")) >= MAX_GHOSTS:
+                logger.warning(f"Ghost queue full ({MAX_GHOSTS}) -- PID:{pid} {name} not judged")
+                return False
+            self._watch[pid] = {
+                "pid": pid, "name": name, "path": None, "created": None,
+                "started": now, "max_score": 0.0, "scored": 0,
+                "last_seq": None, "exited_at": now, "pid_reused": False,
+                "extended": False, "ghost": True,
             }
         return True
 
@@ -884,6 +1518,41 @@ class BehaviorMonitor:
     def _drop(self, pid):
         with self._lock:
             self._watch.pop(pid, None)
+        forget = getattr(sequence_extractor, "forget", None)
+        if forget:
+            forget(pid)
+
+    @staticmethod
+    def _live_process(e):
+        """(proc, None) while the watched process runs, else (None, pid_was_reused)."""
+        try:
+            proc = psutil.Process(e["pid"])
+            if abs(proc.create_time() - e["created"]) > 1e-3:
+                return None, True
+            if not proc.is_running():
+                return None, False
+            return proc, None
+        except psutil.Error:
+            return None, False
+
+    def _score(self, e, seq):
+        """Score one vector; returns the score, or None when there is no data (#22)."""
+        if seq is None or not np.any(seq):
+            return None
+        score = inference_engine.predict(seq)
+        e["scored"] += 1
+        e["max_score"] = max(e["max_score"], score)
+        e["last_seq"] = seq
+        logger.info(
+            f"[SCORE]  {e['name']} PID:{e['pid']}  Tier-1 score={score:.4f}  "
+            f"({'THREAT' if score >= THREAT_THRESHOLD else 'grey' if score > SAFE_THRESHOLD else 'benign'})"
+        )
+        return score
+
+    @staticmethod
+    def _window_complete(pid):
+        done = getattr(sequence_extractor, "is_complete", None)
+        return bool(done and done(pid))
 
     def tick(self):
         now = time.time()
@@ -891,40 +1560,49 @@ class BehaviorMonitor:
             entries = list(self._watch.values())
         for e in entries:
             pid, name = e["pid"], e["name"]
-            try:
-                proc = psutil.Process(pid)
-                if not proc.is_running() or abs(proc.create_time() - e["created"]) > 1e-3:
+
+            if e["exited_at"] is not None:                      # #28
+                if now - e["exited_at"] >= EXIT_SETTLE:
+                    if e.get("ghost"):
+                        self._finalize_ghost(e)                  # #32
+                    else:
+                        self._finalize_exited(e)
                     self._drop(pid)
-                    logger.debug(f"Monitor: PID:{pid} {name} exited")
-                    continue
-            except psutil.Error:
+                continue
+
+            proc, reused = self._live_process(e)
+            if proc is None:
+                e["exited_at"], e["pid_reused"] = now, reused
+                logger.debug(f"Monitor: PID:{pid} {name} exited -- final verdict in {EXIT_SETTLE}s")
+                continue
+
+            score = self._score(e, sequence_extractor.get_sequence(pid))
+            if score is not None and score >= THREAT_THRESHOLD:
+                _enforce_kill(proc, pid, name, e["path"],
+                              f"score={score:.4f} >= {THREAT_THRESHOLD}", e["last_seq"])
                 self._drop(pid)
                 continue
 
-            seq = sequence_extractor.get_sequence(pid)
-            if seq is not None and np.any(seq):                 # #22
-                score = inference_engine.predict(seq)
-                e["scored"] += 1
-                e["max_score"] = max(e["max_score"], score)
-                logger.info(
-                    f"[SCORE]  {name} PID:{pid}  Tier-1 score={score:.4f}  "
-                    f"({'THREAT' if score >= THREAT_THRESHOLD else 'grey' if score > SAFE_THRESHOLD else 'benign'})"
-                )
-                if score >= THREAT_THRESHOLD:
-                    _enforce_kill(proc, pid, name, e["path"],
-                                  f"score={score:.4f} >= {THREAT_THRESHOLD}")
+            age = now - e["started"]
+            if e["scored"]:
+                if age >= MONITOR_WINDOW or self._window_complete(pid):   # #29
+                    self._finalize(e)
                     self._drop(pid)
-                    continue
-
-            if now - e["started"] >= MONITOR_WINDOW:
+            elif age >= MAX_WATCH:
                 self._finalize(e)
                 self._drop(pid)
+            elif age >= MONITOR_WINDOW and not e["extended"]:          # #27
+                e["extended"] = True
+                logger.info(
+                    f"[DORMANT]    {name} PID:{pid} no behavior in {MONITOR_WINDOW}s "
+                    f"-- watching up to {MAX_WATCH}s"
+                )
 
     def _finalize(self, e):
         pid, name, ms = e["pid"], e["name"], e["max_score"]
         if e["scored"] == 0:
             logger.warning(
-                f"NO BEHAVIOR DATA PID:{pid} {name} in {MONITOR_WINDOW}s "
+                f"NO BEHAVIOR DATA PID:{pid} {name} in {MAX_WATCH}s "
                 f"-- left running (unverified)"
             )
         elif ms <= SAFE_THRESHOLD:
@@ -932,6 +1610,57 @@ class BehaviorMonitor:
         else:
             logger.warning(
                 f"[GREY ZONE]  {name} escalated to Cloud (Score: {ms:.2f}) PID:{pid}"
+            )
+            self._escalate_to_cloud(e)
+
+    def _finalize_ghost(self, e):
+        """(#32) Triage a process that exited before triage, from its Sysmon record."""
+        pid, name = e["pid"], e["name"]
+        path = sequence_extractor.creation_image(pid)
+        if not path:
+            logger.debug(f"[GHOST]      {name} PID:{pid} -- no Sysmon creation event, not judged")
+            return
+        # WMI process names can be truncated (15 chars) -- prefix match. A mismatch
+        # means the PID now belongs to another process: judge nothing.
+        base = os.path.basename(path).lower()
+        if not name or not base.startswith(name.lower()):
+            logger.debug(f"[GHOST]      PID:{pid} '{name}' no longer matches {path} -- not judged")
+            return
+        verdict, _ = _triage(pid, name, path)
+        if verdict not in ("watch", "unknown"):
+            logger.debug(f"[GHOST]      {name} PID:{pid} exited before triage -- {verdict}")
+            return
+        e["path"] = path
+        e["fp"] = file_fingerprint(path)   # short-lived programs end up here: let Tier 2's BENIGN stick
+        logger.debug(f"[GHOST]      {name} PID:{pid} exited before triage -- judging recorded "
+                     f"behavior  path={path}")
+        self._finalize_exited(e, quiet=True)
+
+    def _finalize_exited(self, e, quiet=False):
+        """
+        (#28) A process that exits mid-window still gets a verdict. Its buffered
+        behavior is scored once more (late Sysmon events included); if the PID was
+        already reused, the last vector scored while it ran is used instead.
+        quiet: benign / no-data outcomes are logged at DEBUG (ghost processes, #32).
+        """
+        pid, name = e["pid"], e["name"]
+        info = logger.debug if quiet else logger.info
+        seq = None if e["pid_reused"] else sequence_extractor.get_sequence(pid)
+        if self._score(e, seq) is None and e["last_seq"] is not None:
+            self._score(e, e["last_seq"])
+        ms = e["max_score"]
+        if e["scored"] == 0:
+            info(f"[EXITED]     {name} PID:{pid} exited before producing behavior data")
+        elif ms >= THREAT_THRESHOLD:
+            logger.critical(
+                f"[POST-MORTEM THREAT]  {name} PID:{pid} exited before it could be killed "
+                f"-- Tier-1 score={ms:.4f}  path={e['path']}  (investigate its children / files)"
+            )
+        elif ms <= SAFE_THRESHOLD:
+            info(f"[BENIGN]     {name} exited, allowed (Score: {ms:.2f}) PID:{pid}")
+        else:
+            logger.warning(
+                f"[GREY ZONE]  {name} exited, escalated to Cloud for a verdict (Score: {ms:.2f}) PID:{pid}"
             )
             self._escalate_to_cloud(e)
 
@@ -945,7 +1674,14 @@ class BehaviorMonitor:
         t1_score = e["max_score"]
 
         # Get a fresh feature vector for cloud analysis
-        features = sequence_extractor.get_sequence(pid).flatten().tolist()
+        # An exited process's PID may be reused -- send the vector it was scored on.
+        seq = e.get("last_seq") if e.get("exited_at") else sequence_extractor.get_sequence(pid)
+        if seq is None:
+            seq = e.get("last_seq")
+        if seq is None:
+            logger.warning(f"[GREY ZONE]  {name} PID:{pid} -- no features left to escalate")
+            return
+        features = seq.flatten().tolist()
         payload  = {
             "process_name": name,
             "tier1_score": float(t1_score),
@@ -953,24 +1689,31 @@ class BehaviorMonitor:
         }
 
         try:
-            resp = requests.post(CLOUD_API_URL, json=payload, timeout=5)
-            resp.raise_for_status()
-            data       = resp.json()
+            # name / PID / path stay on this PC: shown in "What Haltline sends", never sent
+            data       = ask_tier2(payload, {"name": name, "pid": pid, "path": path})
             verdict    = data.get("verdict", "UNKNOWN")
-            confidence = float(data.get("confidence", 0.0))
+            # The signed cloud API returns the verdict only (no probability, plan 4.1).
+            confidence = "n/a" if data.get("confidence") is None else f"{float(data['confidence']):.4f}"
 
             if verdict == "KILL":
                 logger.critical(
-                    f"[CLOUD VERDICT]  {name} KILLED by Tier-2 "
-                    f"(Score: {confidence:.2f})  PID:{pid}"
+                    f"[CLOUD VERDICT]  {name} THREAT per Tier-2 "
+                    f"(Score: {confidence})  PID:{pid}  path={path}"
                 )
+                if e.get("exited_at"):
+                    # The PID may already belong to another process -- alert only.
+                    logger.critical(
+                        f"[POST-MORTEM THREAT]  {name} PID:{pid} had exited -- Tier-2 "
+                        f"conf={confidence}  path={path}  (investigate its children / files)"
+                    )
+                    return
                 try:
                     proc = psutil.Process(pid)
                     if (proc.is_running() and
                             abs(proc.create_time() - e["created"]) <= 1e-3):
                         _enforce_kill(
                             proc, pid, name, path,
-                            f"Tier-2 KILL verdict conf={confidence:.4f}"
+                            f"Tier-2 KILL verdict conf={confidence}", features
                         )
                     else:
                         logger.debug(
@@ -983,10 +1726,18 @@ class BehaviorMonitor:
             else:
                 logger.info(
                     f"[CLOUD VERDICT]  {name} ALLOWED by Tier-2 "
-                    f"(Score: {confidence:.2f})  PID:{pid}"
+                    f"(Score: {confidence})  PID:{pid}"
                 )
+                fp0 = e.get("fp")
+                if (verdict == "BENIGN" and cleared is not None and fp0 is not None
+                        and ClearedCache.eligible(path) and file_fingerprint(path) == fp0):
+                    cleared.add(fp0)   # same file that ran: next time no cloud request
 
         except requests.exceptions.ConnectionError:
+            if e.get("exited_at"):
+                logger.error(f"[CLOUD OFFLINE]  {name} PID:{pid} (exited) -- no Tier-2 verdict, "
+                             f"Tier-1 score={t1_score:.4f}  path={path}")
+                return
             logger.error(
                 f"[CLOUD OFFLINE]  {name} -- server unreachable, "
                 f"falling back to timeout policy (policy={NETWORK_FAIL_POLICY})"
@@ -999,6 +1750,8 @@ class BehaviorMonitor:
                 })
         except Exception as ex:
             logger.error(f"[CLOUD ERROR]  {name}: {ex}")
+            if e.get("exited_at"):
+                return
             with grey_zone_lock:
                 grey_zone_queue.append({
                     "pid": pid, "name": name, "path": path,
@@ -1069,6 +1822,114 @@ class GreyZoneMonitor:
                 f"[FAIL-OPEN] PID:{pid} {name} left running after {GREY_ZONE_TIMEOUT}s "
                 f"Cloud Timeout - Unverified -- score={score:.4f}  path={exe_path}"
             )
+
+    def stop(self):
+        self._stop.set()
+
+
+def send_report(alert):
+    """
+    (#34) Upload a report the user chose to send, plus any queued earlier. Anything that can't
+    be sent now stays in REPORTS_OUTBOX for the next attempt. Returns True if this one was sent.
+    """
+    sha = None
+    try:
+        sha = CustomWhitelist._compute_sha256(alert["path"]) if alert.get("path") else None
+    except OSError:
+        pass
+    report = {"name": alert["name"], "path": alert.get("path") or "", "sha256": sha or "",
+              "reason": alert.get("reason", ""), "reasons": alert.get("reasons", [])}
+    queued = []
+    if os.path.exists(REPORTS_OUTBOX):
+        with open(REPORTS_OUTBOX, encoding="utf-8") as f:
+            queued = [json.loads(line) for line in f if line.strip()]
+    pending = queued + [report]
+    left = pending
+    if cloud_client is not None:
+        left = []
+        for r in pending:
+            try:
+                cloud_client.report(r)
+            except Exception as e:
+                logger.warning(f"[CLOUD] report not sent ({e}) -- kept for later")
+                left.append(r)
+    os.makedirs(os.path.dirname(REPORTS_OUTBOX), exist_ok=True)
+    with open(REPORTS_OUTBOX, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(r) + "\n" for r in left)
+    return report not in left
+
+
+class DecisionWatcher:
+    """
+    (#34) Applies the user's answers from telltale_helper.py. A decision names an alert the
+    agent wrote; it can only close that flagged process (after a PID-reuse check), leave it
+    running, or queue a report, so a forged decision file gains nothing.
+    """
+
+    def __init__(self):
+        self._stop = threading.Event()
+
+    def monitor(self):
+        logger.info(f"Decision Watcher started (ask mode, {IPC_DIR})")
+        while not self._stop.wait(1):
+            try:
+                self.check()
+            except Exception as e:
+                logger.error(f"Decision watcher error: {e}")
+
+    def check(self):
+        if not os.path.isdir(DECISIONS_DIR):
+            return
+        for fn in os.listdir(DECISIONS_DIR):
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(DECISIONS_DIR, fn)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    decision = json.load(f)
+                os.remove(path)
+            except (OSError, ValueError):
+                continue
+            self.apply(decision)
+
+    def apply(self, decision):
+        alert_id, choice = str(decision.get("id", "")), decision.get("choice")
+        if choice == "problem":
+            # "Report a problem" from the helper: free text, capped; sent like any report (device-signed).
+            text = " ".join(str(decision.get("text", "")).split())[:1000]
+            if text:
+                parts = [text[i:i + 200] for i in range(0, len(text), 200)]
+                sent = send_report({"name": "(problem report)", "path": "", "reason": parts[0],
+                                    "reasons": parts + [f"Haltline {AGENT_VERSION}"]})
+                logger.info(f"[USER PROBLEM REPORT] {'sent' if sent else 'saved for upload'}")
+            return
+        alert_path = os.path.join(ALERTS_DIR, alert_id + ".json")
+        if not (len(alert_id) == 32 and alert_id.isalnum() and os.path.exists(alert_path)):
+            logger.warning(f"Ignored decision for unknown alert {alert_id[:40]!r}")
+            return
+        with open(alert_path, encoding="utf-8") as f:
+            a = json.load(f)
+        pid, name = a["pid"], a["name"]
+        if choice == "report":
+            sent = send_report(a)
+            logger.info(f"[USER REPORT] {name} PID:{pid} -- {'sent' if sent else 'saved for upload'}")
+            return   # the user still picks Close or Run in the same dialog
+        if choice == "close":
+            try:
+                proc = psutil.Process(pid)
+                same = abs(proc.create_time() - a["created"]) <= 1e-3
+            except psutil.Error:
+                proc, same = None, False
+            if same and _safe_kill(proc, pid, name):
+                logger.critical(f"[USER CLOSED] {name} PID:{pid} closed by the user  path={a['path']}")
+            else:
+                logger.info(f"[USER CLOSED] {name} PID:{pid} had already exited")
+        elif choice == "run":
+            logger.warning(f"[USER ALLOWED] {name} PID:{pid} kept running by the user  path={a['path']}")
+        else:
+            logger.warning(f"Ignored decision {choice!r} for alert {alert_id}")
+            return
+        os.remove(alert_path)
 
     def stop(self):
         self._stop.set()
@@ -1150,15 +2011,14 @@ class ResourceWatchdog:
 # ══════════════════════════════════════════════════════════════
 
 BANNER = r"""
-  _____ ___ _____ ___    _     _____ ___  ___
- |_   _|_ _| ____|  _ \ / |   | ____|  _ \|  _ \
-   | |  | ||  _| | |_) || |   |  _| | | | | |_) |
-   | |  | || |___|  _ < | |   | |___| |_| |  _ <
-   |_| |___|_____|_| \_\|_|   |_____|____/|_| \_\
+  _____ _____ _     _   _____  _    _     _____
+ |_   _| ____| |   | | |_   _|/ \  | |   | ____|
+   | | |  _| | |   | |   | | / _ \ | |   |  _|
+   | | | |___| |___| |___| |/ ___ \| |___| |___
+   |_| |_____|_____|_____|_/_/   \_\_____|_____|
 
-   Endpoint Security Agent v3.0 (behavioral)
-   26 Production Corrections Applied
-   NETWORK_FAIL_POLICY: {policy}
+   Telltale -- behavioral ransomware detection for Windows
+   Endpoint agent v3.0  |  NETWORK_FAIL_POLICY: {policy}
 """
 
 
@@ -1181,9 +2041,20 @@ def main():
       6. Start thread pool
       7. Start WMI listener (blocks main thread)
     """
-    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor
+    global inference_engine, sequence_extractor, whitelist_db, behavior_monitor, cloud_client, cleared, AGENT_MODE
+
+    if "--mode" in sys.argv:
+        i = sys.argv.index("--mode")
+        AGENT_MODE = sys.argv[i + 1].strip().lower() if i + 1 < len(sys.argv) else AGENT_MODE
+    if AGENT_MODE not in MODES:
+        logger.warning(f"Unknown mode '{AGENT_MODE}' -- using 'alert'")
+        AGENT_MODE = "alert"
 
     print(BANNER.format(policy=NETWORK_FAIL_POLICY))
+    logger.info(f"Mode: {AGENT_MODE.upper()}" + {
+        "enforce": "  -- threats are KILLED",
+        "ask": "  -- the user decides in the Telltale helper (Close app / Run anyway / Send report)",
+    }.get(AGENT_MODE, "  -- threats are logged only (use --mode ask or enforce)"))
 
     # ── #3: Admin privilege check ───────────────────────────
     if not is_admin():
@@ -1214,10 +2085,30 @@ def main():
         sys.exit(1)
 
     # ── Initialize BehavioralExtractor (#12) ────────────────
-    sequence_extractor = BehavioralExtractor()
+    sequence_extractor = make_extractor()
 
     # ── Initialize SQLite whitelist (#8 Layer 1B) ───────────
     whitelist_db = CustomWhitelist()
+
+    # ── Files Tier 2 already allowed: no repeat cloud checks for 7 days ──
+    cleared = ClearedCache(os.path.join(IPC_DIR, "cleared.json"))
+    logger.info(f"Cleared-by-Tier-2 cache: {len(cleared)} file(s)")
+
+    # ── Signed cloud Tier 2 (#33) -- register now; a failure is retried on first escalation ──
+    cloud_client = make_cloud_client()
+    if cloud_client is not None:
+        try:
+            cloud_client.register()
+        except Exception as e:
+            logger.warning(f"[CLOUD] registration failed ({e}) -- will retry on first escalation")
+
+        def licence_watch():
+            while not STOP.wait(LICENCE_CHECK_S):
+                try:
+                    cloud_client.register()   # idempotent; a signed refusal stops the agent
+                except Exception as e:
+                    logger.warning(f"[LICENCE] check failed ({e}) -- next try in {LICENCE_CHECK_S // 3600} h")
+        threading.Thread(target=licence_watch, name="Licence", daemon=True).start()
 
     # ── Start Grey Zone Monitor (#6, #11) ───────────────────
     gz_monitor = GreyZoneMonitor()
@@ -1228,6 +2119,11 @@ def main():
     )
     gz_thread.start()
 
+    # ── Ask mode (#34): apply the user's decisions ──────────
+    decision_watcher = DecisionWatcher()
+    if AGENT_MODE == "ask":
+        threading.Thread(target=decision_watcher.monitor, name="Decisions", daemon=True).start()
+
     # ── Start Behavior Monitor (#16, #21) ───────────────────
     behavior_monitor = BehaviorMonitor()
     bm_thread = threading.Thread(
@@ -1236,6 +2132,11 @@ def main():
         daemon=True,
     )
     bm_thread.start()
+
+    # ── Signed updates (#36): only release builds carry an update URL and key ──
+    updater = UpdateChecker()
+    if UPDATE_URL and UPDATE_PUBKEY:
+        threading.Thread(target=updater.monitor, name="Updates", daemon=True).start()
 
     # ── Start Resource Watchdog (#13) ───────────────────────
     watchdog = ResourceWatchdog()
@@ -1264,7 +2165,7 @@ def main():
         c = wmi.WMI()
         watcher = c.Win32_ProcessStartTrace.watch_for()
 
-        while True:
+        while not STOP.is_set():
             # (#25) finite timeout so Ctrl+C / shutdown is honoured
             try:
                 event = watcher(timeout_ms=1000)
@@ -1285,10 +2186,16 @@ def main():
         logger.info("Shutting down thread pool...")
         executor.shutdown(wait=False)
         gz_monitor.stop()
+        decision_watcher.stop()
         behavior_monitor.stop()
         watchdog.stop()
+        updater.stop()
+        if hasattr(sequence_extractor, "stop"):
+            sequence_extractor.stop()
         if whitelist_db:
             whitelist_db.close()
+        if cleared is not None:
+            cleared.save(force=True)   # keep the last minute's "safe" files
         logger.info("Agent stopped.")
 
 

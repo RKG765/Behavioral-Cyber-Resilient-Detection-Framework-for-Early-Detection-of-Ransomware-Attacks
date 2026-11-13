@@ -1,7 +1,7 @@
 /**
  * app.js
  * ======
- * Real-time event-driven client for the Two-Tier EDR SOC Command Center.
+ * Real-time event-driven client for the Telltale SOC Command Center.
  * Handles WebSockets, Canvas gauges, modular tab switching, Chart.js graphs,
  * live log insertion without full-page reloads, and interactive analyst remediation.
  */

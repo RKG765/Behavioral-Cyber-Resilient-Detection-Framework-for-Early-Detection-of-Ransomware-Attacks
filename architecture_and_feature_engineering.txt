@@ -270,7 +270,7 @@ PART 3: COMPLETE TRANSCRIPT & SLIDE CONTENT OF ENTERPRISE_TWO_TIER_EDR_MASTER_DE
 ====================================================================================================
 
 Below is the complete transcript of the 20-slide Master Presentation Deck generated in
-enterprise_two_tier_edr_master_deck.pptx, including slide layout, visual cards, benchmark tables,
+the former slide deck (now removed), including slide layout, visual cards, benchmark tables,
 and word-for-word speaker notes.
 
 ----------------------------------------------------------------------------------------------------
@@ -293,7 +293,7 @@ Speaker Script:
 SLIDE 2: 1. PROBLEM STATEMENT: The Legacy EDR Trilemma
 ----------------------------------------------------------------------------------------------------
 Title: The Problem Statement: The Legacy EDR Trilemma
-Embedded Diagram: diagram_assets/diag1_problem_trilemma.png (Left Column)
+Embedded Diagram: how/assets/diag1_problem_trilemma.png (Left Column)
 Structured Card (Right Column):
   - 1. Cloud-Only EDR Latency: Streaming every system call to cloud introduces 300ms to 2,000ms delay.
        Modern ransomware (LockBit 3.0) encrypts files in under 100 microseconds per file. By the time
@@ -338,7 +338,7 @@ Speaker Script:
 SLIDE 4: 3. SYSTEM ARCHITECTURE: Kernel Spawn to Cloud Remediation
 ----------------------------------------------------------------------------------------------------
 Title: Full System Architecture: Kernel Spawn to Cloud Remediation
-Embedded Diagram: diagram_assets/diag2_full_architecture.png (Left Column)
+Embedded Diagram: how/assets/diag2_full_architecture.png (Left Column)
 Card (Right Column): Architectural Data Flow
   - 1. Kernel Intercept: WMI/ETW hooks capture process spawn events (PID, binary path, cmdline) into a worker thread pool.
   - 2. Fast-Path Filters: L1A WinTrust Authenticode and L1B SQLite database check signatures in 0.0ms to 0.2ms.
@@ -357,7 +357,7 @@ Speaker Script:
 SLIDE 5: 4. SCORING CRITERIA: Multi-Stage Gating & Decision Rules
 ----------------------------------------------------------------------------------------------------
 Title: Process Scoring Criteria: Multi-Stage Gating & Decision Rules
-Embedded Diagram: diagram_assets/diag3_scoring_criteria.png (Left Column)
+Embedded Diagram: how/assets/diag3_scoring_criteria.png (Left Column)
 Card (Right Column): Decision Threshold Rationale
   - L1A / L1B Fast-Path (0.0ms): Signed Microsoft/Google binaries or pre-approved hashes bypass ML completely.
   - Tier 1 Score <= 0.10 [ALLOW]: Empirical False Negative Rate is 0.00%. Process runs freely with zero network egress.
@@ -413,7 +413,7 @@ Speaker Script:
 SLIDE 8: 7. DATASET INTEGRITY: Preventing Data Leakage via GroupKFold
 ----------------------------------------------------------------------------------------------------
 Title: Dataset Integrity: Preventing Data Leakage via GroupKFold
-Embedded Diagram: diagram_assets/diag4_dataset_groupkfold.png (Left Column)
+Embedded Diagram: how/assets/diag4_dataset_groupkfold.png (Left Column)
 Card (Right Column): The Data Leakage Trap
   - Telemetry Origin: 1,470 balanced process traces (735 benign enterprise sysmon logs, 735 red-team malware executions).
   - Noise Filtering: Stripped internal Splunk processes (splunk.exe, splunkd.exe) and sanitized usernames, GUIDs, and random PIDs.
@@ -432,7 +432,7 @@ Speaker Script:
 SLIDE 9: 8. TIER 1 ARCHITECTURE: Lightweight Behavioral MLP for Edge Deployment
 ----------------------------------------------------------------------------------------------------
 Title: Tier 1 Model: Lightweight Behavioral MLP for Edge Deployment
-Embedded Diagram: diagram_assets/diag5_tier1_mlp.png (Left Column)
+Embedded Diagram: how/assets/diag5_tier1_mlp.png (Left Column)
 Card (Right Column): Why MLP for Edge Tier 1?
   - Layer Architecture: Linear(99->128) -> BatchNorm1d -> ReLU -> Dropout(0.3) -> Linear(128->64) -> BatchNorm1d -> ReLU -> Dropout(0.3) -> Linear(64->1) -> Sigmoid.
   - Sub-Millisecond Speed: Executes in 1.4ms on standard workstation CPU cores without requiring GPU acceleration.
@@ -487,7 +487,7 @@ Speaker Script:
 SLIDE 12: 11. TIER 2 ARCHITECTURE: Deep Behavioral ResNet for Heavy Cloud Reasoning
 ----------------------------------------------------------------------------------------------------
 Title: Tier 2 Model: Deep Behavioral ResNet for Heavy Cloud Reasoning
-Embedded Diagram: diagram_assets/diag6_tier2_resnet.png (Left Column)
+Embedded Diagram: how/assets/diag6_tier2_resnet.png (Left Column)
 Card (Right Column): Why ResNet for Tabular Data?
   - Residual Skip Connections: Prevents vanishing gradients during backpropagation, enabling deep feature interaction learning.
   - Feature Conjunctions: Detects complex multi-step attacks: Temp execution AND Base64 payload AND DLL injection burst.
@@ -504,7 +504,7 @@ Speaker Script:
 SLIDE 13: 12. ENGINEERING CHALLENGES: Real-World Hurdles & Applied Solutions
 ----------------------------------------------------------------------------------------------------
 Title: Engineering Journey: Real-World Hurdles & Applied Solutions
-Embedded Diagram: diagram_assets/diag7_evolution_journey.png (Left Column)
+Embedded Diagram: how/assets/diag7_evolution_journey.png (Left Column)
 Card (Right Column): Three Critical Engineering Fixes
   - 1. WinTrust API Deadlocks: WinVerifyTrust C-types calls hung on locked binaries.
        -> Solved via dedicated worker thread pool with a 1.5s watchdog timeout.

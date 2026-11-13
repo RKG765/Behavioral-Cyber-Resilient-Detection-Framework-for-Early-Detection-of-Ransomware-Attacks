@@ -1,0 +1,31 @@
+<!--
+  Minimal Sysmon config for the EDR feature schema.
+  Logs only the event types the training data actually contained
+  (LMD-2023: mostly 1, 2, 3, 5, 11, 12-14, 22). ImageLoad (7) and
+  ProcessAccess (10) are OFF: they were near-absent in training, so logging
+  them would push img_*/pa_* features outside the trained distribution
+  (and ImageLoad is very noisy). FileDelete (23) is off because it archives
+  deleted files to disk.
+-->
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>sha256</HashAlgorithms>
+  <CheckRevocation>false</CheckRevocation>
+  <EventFiltering>
+    <RuleGroup name="edr" groupRelation="or">
+      <!-- empty exclude = log everything of that type -->
+      <ProcessCreate onmatch="exclude"/>
+      <FileCreateTime onmatch="exclude"/>
+      <NetworkConnect onmatch="exclude"/>
+      <ProcessTerminate onmatch="exclude"/>
+      <FileCreate onmatch="exclude"/>
+      <RegistryEvent onmatch="exclude"/>
+      <DnsQuery onmatch="exclude"/>
+      <!-- empty include = log nothing of that type -->
+      <ImageLoad onmatch="include"/>
+      <ProcessAccess onmatch="include"/>
+      <CreateRemoteThread onmatch="include"/>
+      <RawAccessRead onmatch="include"/>
+      <FileDelete onmatch="include"/>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

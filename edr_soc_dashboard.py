@@ -1,7 +1,7 @@
 """
 edr_soc_dashboard.py
 ====================
-Enterprise Two-Tier EDR -- Real-Time Streamlit SOC Command Center
+Telltale -- Real-Time Streamlit SOC Command Center
 Matches the exact UI layout from the user's dashboard screenshot, powered by
 modular zero-refresh fragments (@st.fragment(run_every="2s")).
 
@@ -43,7 +43,7 @@ import plotly.graph_objects as go
 # PAGE CONFIGURATION
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Enterprise Two-Tier EDR | SOC Command Center",
+    page_title="Telltale | SOC Command Center",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -679,25 +679,28 @@ with tabs[0]:
             if st.button("🟡 Grey-Zone Attack", use_container_width=True):
                 pid = np.random.randint(100000, 290000)
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Dataset row 107 is a malware process whose real Tier-1 score (~0.77)
+                # falls in the grey zone and that Tier 2 kills (~0.87 vs threshold 0.6546).
+                grey_feat = np.load(FILE_DATASET_NPZ)['feat'][107].astype(np.float32)
+                t1_sess = ort.InferenceSession(FILE_T1_ONNX, providers=["CPUExecutionProvider"])
+                t1_score = float(t1_sess.run(None, {t1_sess.get_inputs()[0].name: grey_feat.reshape(1, -1)})[0].ravel()[0])
                 # Trigger real REST API POST to server.py if online
-                log1 = f"{now_str} | WARNING  | BehaviorMon  | [GREY ZONE]  powershell_stealth.exe escalated to Cloud (Score: 0.68) PID:{pid}\n"
+                log1 = f"{now_str} | WARNING  | BehaviorMon  | [GREY ZONE]  powershell_stealth.exe escalated to Cloud (Score: {t1_score:.2f}) PID:{pid}\n"
                 with open(FILE_AGENT_LOG, "a", encoding="utf-8") as f:
                     f.write(log1)
                 try:
-                    # Sample feature from dataset
-                    d = np.load(FILE_DATASET_NPZ)
-                    grey_idx = 3 # Borderline malware
                     payload = {
                         "process_name": "powershell_stealth.exe",
-                        "tier1_score": 0.68,
-                        "features": d['feat'][grey_idx].tolist()
+                        "tier1_score": t1_score,
+                        "features": grey_feat.tolist()
                     }
                     r = requests.post(f"{CLOUD_API_URL}/score", json=payload, timeout=1.5)
                     if r.status_code == 200:
                         res = r.json()
-                        verdict = res.get("verdict", "KILL")
-                        conf = res.get("confidence", 0.85)
-                        log2 = f"{now_str} | CRITICAL | CloudVerdict | [CLOUD VERDICT]  powershell_stealth.exe {verdict}ED by Tier-2 Cloud ResNet (Score: {conf:.4f}) PID:{pid}\n"
+                        verdict = res.get("verdict", "BENIGN")
+                        conf = res.get("confidence", 0.0)
+                        level, outcome = ("CRITICAL", "KILLED") if verdict == "KILL" else ("INFO    ", "ALLOWED")
+                        log2 = f"{now_str} | {level} | CloudVerdict | [CLOUD VERDICT]  powershell_stealth.exe {outcome} by Tier-2 Cloud ResNet (Score: {conf:.4f}) PID:{pid}\n"
                         with open(FILE_AGENT_LOG, "a", encoding="utf-8") as f:
                             f.write(log2)
                         st.toast(f"Escalated to Cloud -> Verdict: {verdict}", icon="🟡")
@@ -720,7 +723,7 @@ with tabs[0]:
 # TAB 2: SYSTEM ARCHITECTURE & MERMAID DIAGRAMS
 # =============================================================================
 with tabs[1]:
-    st.markdown("## 📊 Enterprise Two-Tier EDR: Comprehensive Architectural Schematics")
+    st.markdown("## 📊 Telltale: Comprehensive Architectural Schematics")
     st.markdown("All diagrams are sourced directly from [`diagrams.md`](file:///d:/project4/diagrams.md) to illustrate the end-to-end system design:")
 
     st.markdown("### 1. The Legacy EDR Problem Statement: Trilemma")
@@ -746,7 +749,7 @@ with tabs[1]:
             G["Static Signatures & Threshold Rules"] -->|"High False Positive Rate"| H["SOC Alert Fatigue (95%+ False Alarms)"]
             H --> I["Missed True Zero-Day Threats"]
         end
-        subgraph ProposedSolution["Our Proposed Two-Tier EDR Solution"]
+        subgraph ProposedSolution["Telltale: Proposed Two-Tier Solution"]
             J["Tier 1: Ultra-Fast Edge Gatekeeper (<1.8ms, <150MB RSS)"]
             K["Tier 2: Deep Cloud Heavy Brain (ResNet + XAI Attribution)"]
             L["Asymmetric Grey-Zone Escalation (Only 5-10% sent to Cloud)"]

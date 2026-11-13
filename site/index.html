@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telltale — Behavioral Ransomware Detection for Windows</title>
+  <meta name="description" content="Free, open-source Windows agent that detects ransomware by behavior: live Sysmon telemetry, a Rust feature sensor and two-tier ML scoring. Alert-first, MIT licensed.">
+  <meta name="theme-color" content="#0a0c0f">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,600..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314181e'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%233be38b'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top">Telltale <span>/ behavioral ransomware detection</span></a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    <ul class="nav-links" id="nav-links">
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#dashboard">Dashboard</a></li>
+      <li><a href="#download">Download</a></li>
+      <li><a data-link="repo" href="#">GitHub</a></li>
+    </ul>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ───────── HERO: headline · sub-headline · one CTA · visual · trust ───────── -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap">
+      <div class="hero-copy">
+        <p class="eyebrow">Behavioral ransomware detection · Windows 10/11</p>
+        <h1 id="hero-title">Catch ransomware by what it does, not what it’s called.</h1>
+        <p class="lead">
+          A free Windows agent that watches every new process through Sysmon, turns its first
+          50 actions into 99 behavioral signals in Rust, and scores it on your own CPU, so
+          renamed, repacked and never-seen-before samples are judged by behavior.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" data-link="download" href="#download">Download for Windows</a>
+          <span class="meta">Alert-only by default · MIT licensed</span>
+        </div>
+        <p class="trust">
+          <span>
+            <strong>92.1% of unseen malicious processes flagged, 2.8% false alarms</strong>
+            measured on 294 held-out processes the models never trained on.
+          </span>
+        </p>
+      </div>
+
+      <figure class="console" aria-label="Sample agent log output">
+        <div class="console-bar">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>agent.log — live</span>
+        </div>
+<pre><span class="ok">INFO   Mode: ALERT  -- threats are logged only</span>
+<span class="ok">INFO   SysmonExtractor initialized (LIVE)</span>
+INFO   [TRUSTED]  chrome.exe allowed (Google LLC)
+INFO   [WATCH]    powershell.exe -- signed system tool, monitoring behavior
+INFO   UNKNOWN    report_tool.exe -- monitoring behavior for 30s
+INFO   [SCORE]    report_tool.exe  Tier-1 score=0.0412  (benign)
+INFO   [BENIGN]   report_tool.exe allowed (Score: 0.04)
+<span class="warn">WARN   [GREY ZONE] updater.exe escalated to Cloud (Score: 0.47)</span>
+INFO   [CLOUD VERDICT] updater.exe ALLOWED by Tier-2 (Score: 0.21)
+<span class="crit">CRIT   [ALERT] THREAT unknown.exe -- score=0.9731 &gt;= 0.9  (not killed: mode=alert)</span></pre>
+        <figcaption class="console-note">Illustrative output. Real lines are written to agent.log.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ───────── HOW IT WORKS ───────── -->
+  <section id="how" aria-labelledby="how-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-title">Three steps, all on your machine.</h2>
+        <p class="lead">No signatures to update. The models read how a process behaves in its first moments.</p>
+      </div>
+
+      <div class="steps">
+        <article class="step">
+          <span class="num">01 — See</span>
+          <h3>Sysmon records every process</h3>
+          <p>Process starts, file writes, registry changes, network connections and DNS lookups
+             are captured by Microsoft Sysmon with a minimal, purpose-built config.</p>
+        </article>
+        <article class="step">
+          <span class="num">02 — Understand</span>
+          <h3>A Rust sensor builds 99 signals</h3>
+          <p>Each process’s first 50 events become a behavioral fingerprint: command-line traits,
+             launch location, parent/child lineage, file and network patterns, timing bursts.
+             It matches the training features exactly.</p>
+        </article>
+        <article class="step">
+          <span class="num">03 — Decide</span>
+          <h3>Two tiers, fast then careful</h3>
+          <p>A small on-device model settles clear cases immediately. Uncertain ones go to a deeper
+             Tier-2 network. Signed Windows tools that attackers abuse are still watched.</p>
+        </article>
+      </div>
+
+      <div class="callout-row">
+        <p class="note"><strong>Alert first, kill when you’re ready.</strong> Out of the box every
+          threat is logged, never killed. Switch to enforce mode only after you’ve seen how it
+          behaves on your machines.</p>
+        <p class="note"><strong>Private by design.</strong> Scoring runs locally. Only uncertain
+          processes are escalated, and only to a Tier-2 service you run yourself.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────── RESULTS (bento) ───────── -->
+  <section id="results" aria-labelledby="results-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Measured results</p>
+        <h2 id="results-title">Honest numbers, not marketing ones.</h2>
+        <p class="lead">Evaluation copies of both models were trained without a 20% hold-out set.
+          These figures come only from processes they never saw.</p>
+      </div>
+
+      <div class="bento">
+        <div class="tile big">
+          <span class="eyebrow">Detection rate</span>
+          <div>
+            <div class="metric">92.1%</div>
+            <p class="label">of held-out malicious processes flagged by the full two-tier pipeline.</p>
+          </div>
+        </div>
+        <div class="tile">
+          <span class="eyebrow">False alarms</span>
+          <div><div class="metric">2.8%</div><p class="label">of benign processes flagged</p></div>
+        </div>
+        <div class="tile">
+          <span class="eyebrow">ROC AUC</span>
+          <div><div class="metric">0.989</div><p class="label">Tier-2 ranking quality</p></div>
+        </div>
+        <div class="tile">
+          <span class="eyebrow">Features</span>
+          <div><div class="metric">99</div><p class="label">behavioral signals per process</p></div>
+        </div>
+        <div class="tile">
+          <span class="eyebrow">Feature parity</span>
+          <div><div class="metric">100%</div><p class="label">of 1,470 training processes reproduced exactly by the Rust sensor</p></div>
+        </div>
+        <div class="tile wide">
+          <span class="eyebrow">Escalated to Tier 2</span>
+          <div class="bar" aria-hidden="true"><span style="width:39%"></span></div>
+          <p class="label"><strong>39%</strong> of processes are uncertain for Tier 1 and go to the deeper model, so run Tier 2 if you can.</p>
+        </div>
+        <div class="tile wide">
+          <span class="eyebrow">Test set</span>
+          <p class="label"><strong>294 processes</strong> (151 malicious, 143 benign) from the LMD-2023 Sysmon dataset,
+             duplicates grouped, threshold picked on a separate calibration split.</p>
+        </div>
+      </div>
+      <p class="small-print">Lab data is cleaner than real life. Expect more false alarms on everyday PCs, which is why alert mode is the default.</p>
+    </div>
+  </section>
+
+  <!-- ───────── DASHBOARD ───────── -->
+  <section id="dashboard" aria-labelledby="dash-title">
+    <div class="wrap dash">
+      <div class="dash-copy">
+        <p class="eyebrow">Dashboard</p>
+        <h2 id="dash-title">See every verdict as it happens.</h2>
+        <p class="lead">The SOC dashboard runs on your own machine after install. Your telemetry
+          never leaves it.</p>
+        <ul class="checklist">
+          <li>Live feed of trusted, watched, benign, grey-zone and threat verdicts</li>
+          <li>Tier-1 vs Tier-2 decisions and scores per process</li>
+          <li>Start and stop the agent and the Tier-2 service</li>
+          <li>Served on localhost only: no account, no cloud</li>
+        </ul>
+        <p><a class="btn btn-ghost" data-link="dashboard" href="http://127.0.0.1:5050/">Open your dashboard (after install)</a></p>
+      </div>
+
+      <figure class="mock" aria-label="Dashboard preview">
+        <div class="mock-top"><span>SOC Command Center</span><span>127.0.0.1:5050</span></div>
+        <div class="mock-grid">
+          <div class="mock-card"><div class="k">Watched</div><div class="v">14</div></div>
+          <div class="mock-card"><div class="k">Grey zone</div><div class="v">2</div></div>
+          <div class="mock-card"><div class="k">Threats</div><div class="v">1</div></div>
+        </div>
+        <div class="mock-rows" role="table" aria-label="Recent verdicts">
+          <div class="mock-row head" role="row"><span>Process</span><span>Tier-1</span><span>Verdict</span></div>
+          <div class="mock-row" role="row"><span>report_tool.exe</span><span>0.04</span><span>benign</span></div>
+          <div class="mock-row" role="row"><span>powershell.exe</span><span>0.08</span><span>benign</span></div>
+          <div class="mock-row" role="row"><span>updater.exe</span><span>0.47</span><span>tier-2: allow</span></div>
+          <div class="mock-row" role="row"><span>unknown.exe</span><span>0.97</span><span>alert</span></div>
+        </div>
+        <figcaption class="mock-caption">Preview with sample data. Replace with a screenshot of your dashboard.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ───────── DOWNLOAD ───────── -->
+  <section id="download" aria-labelledby="dl-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Download</p>
+        <h2 id="dl-title">Install in one step.</h2>
+      </div>
+
+      <div class="download-card">
+        <div class="download-main">
+          <div class="file">
+            <b data-text="exe-name">Telltale-Setup.exe</b>
+            <span>Windows 10/11 x64 · administrator rights required</span>
+            <span>Version, size and SHA-256 are published on each release page.</span>
+          </div>
+          <p><a class="btn btn-primary" data-link="download" href="#">Download for Windows</a></p>
+          <ol class="steps-list">
+            <li><strong>Run as administrator.</strong> It installs Sysmon from Microsoft and starts the agent at boot.</li>
+            <li><strong>Leave it in alert mode for a few days.</strong> Read <code>agent.log</code> or the dashboard.</li>
+            <li><strong>Turn on enforce mode</strong> only once the false alarms on your machines are acceptable.</li>
+          </ol>
+        </div>
+
+        <div class="download-main">
+          <p class="eyebrow">Or install from source</p>
+          <div class="codeblock">
+            <button class="copy" data-copy="#src-cmd">Copy</button>
+<pre id="src-cmd">git clone <span data-text="repo-url">https://github.com/RKG765/Behavioral-Cyber-Resilient-Detection-Framework-for-Early-Detection-of-Ransomware-Attacks.git</span>
+cd Behavioral-Cyber-Resilient-Detection-Framework-for-Early-Detection-of-Ransomware-Attacks
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1</pre>
+          </div>
+          <p class="label" style="color:var(--muted)">Needs Python 3.10+ and Rust. Uninstall any time with <code>install_windows.ps1 -Uninstall</code>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────── LIMITS ───────── -->
+  <section aria-labelledby="limits-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Know the limits</p>
+        <h2 id="limits-title">What it doesn’t do yet.</h2>
+      </div>
+      <div class="limits">
+        <div class="limit"><h3>Not a replacement for Defender</h3>
+          <p>Run it alongside your antivirus. It adds behavioral detection; it doesn’t replace signatures, patching or backups.</p></div>
+        <div class="limit"><h3>Trained on lab data</h3>
+          <p>The models learned from the LMD-2023 lab dataset. Real machines run different software, so tune with alert mode first.</p></div>
+        <div class="limit"><h3>User-mode, not tamper-proof</h3>
+          <p>The agent runs as SYSTEM but has no kernel driver or self-protection. A process with admin rights can stop it.</p></div>
+        <div class="limit"><h3>Judged on first moments</h3>
+          <p>Each process is scored on its first 50 events. Slow or multi-process attacks can stay under that window.</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Telltale · MIT License · Data: LMD-2023 Sysmon dataset</span>
+    <nav aria-label="Footer">
+      <a data-link="repo" href="#">GitHub</a>
+      <a data-link="releases" href="#">Releases</a>
+      <a data-link="issues" href="#">Report an issue</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="config.js?v=3"></script>
+<script src="app.js?v=3"></script>
+</body>
+</html>

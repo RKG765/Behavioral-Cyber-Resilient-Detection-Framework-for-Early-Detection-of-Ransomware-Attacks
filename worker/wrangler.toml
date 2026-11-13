@@ -1,0 +1,30 @@
+name = "haltline-tier2"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+# Device keys, written by the AWS register Lambda: device_id -> {"pk": base64, "status": "active"|"revoked"}.
+# Create with `npx wrangler kv namespace create DEVICES` and put the id here.
+kv_namespaces = [{ binding = "DEVICES", id = "c277414cdcbf4da2952721417d90d1d5" }]
+
+# Custom domain on your Cloudflare zone (needed for the WAF and rate-limit rules in infra/cloudflare).
+# shortcut: no domain yet (haltline.eu.org pending), so the Worker runs on workers.dev without the zone's
+# WAF / rate-limit rules; uncomment the route and set workers_dev = false once the zone is active.
+# routes = [{ pattern = "api.REPLACE_WITH_YOUR_DOMAIN", custom_domain = true }]
+workers_dev = true
+
+# Per-device limit shared by all isolates in a Cloudflare location (the in-memory count is per isolate).
+[[ratelimits]]
+name = "DEVICE_LIMIT"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+[vars]
+AWS_API_URL = "https://qasi5w5sf7r5vle2fjzj3q6bce0dyqcw.lambda-url.ap-south-1.on.aws" # `terraform output api_url` in infra/aws (direct Lambda URL until CloudFront is allowed)
+
+# Secrets (never in this file):
+#   npx wrangler secret put RESPONSE_SIGNING_SEED   # base64 32-byte Ed25519 seed (see tier2_scorer/README.md)
+#   npx wrangler secret put ORIGIN_SECRET           # shared with the AWS register Lambda
+
+# Builds the Rust scorer to WASM before every `wrangler dev` / `wrangler deploy`.
+[build]
+command = "cargo build --release --lib --target wasm32-unknown-unknown --manifest-path ../tier2_scorer/Cargo.toml"

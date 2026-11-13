@@ -1,0 +1,6 @@
+[server]
+# Dashboards have no authentication -- serve them on this machine only.
+address = "localhost"
+
+[browser]
+gatherUsageStats = false
